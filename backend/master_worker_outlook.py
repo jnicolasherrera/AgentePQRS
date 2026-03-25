@@ -18,11 +18,11 @@ logger = logging.getLogger("MASTER_WORKER")
 
 # Infraestructura V2 — worker usa aequitas_worker (BYPASSRLS nativo)
 DATABASE_URL = os.environ.get("WORKER_DB_URL", "postgresql://aequitas_worker:changeme_worker@postgres_v2:5432/pqrs_v2")
-REDIS_URL = "redis://redis_v2:6379"
+REDIS_URL = os.environ.get("REDIS_URL", "redis://redis_v2:6379")
 
 # Credenciales Maestras Outlook para Flex
 AZURE_CLIENT_ID = "b2f0910b-d300-4a55-963a-59aeb5acabf6"
-AZURE_CLIENT_SECRET = "os.environ.get("AZURE_CLIENT_SECRET")"
+AZURE_CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET")
 AZURE_TENANT_ID = "f765bba0-7d35-4248-9711-5770de77ab2b"
 
 from app.services.ai_engine import clasificar_hibrido

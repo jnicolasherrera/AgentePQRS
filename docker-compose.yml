@@ -79,7 +79,7 @@ services:
     container_name: pqrs_v2_backend
     environment:
       - DATABASE_URL=postgresql://pqrs_admin:pg_password@postgres_v2:5432/pqrs_v2
-      - REDIS_URL=redis://redis_v2:6379
+      - REDIS_URL=redis://:NuSvuOWiQtGWkZleg-zwqUZzs6DewuaK@redis_v2:6379
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - KAFKA_BOOTSTRAP_SERVERS=kafka_v2:29092
       - MINIO_ENDPOINT=minio:9000
@@ -101,14 +101,17 @@ services:
     container_name: pqrs_v2_master_worker
     command: python master_worker_outlook.py
     environment:
-      - WORKER_DB_URL=postgresql://pqrs_admin:pg_password@postgres_v2:5432/pqrs_v2
+      - WORKER_DB_URL=postgresql://aequitas_worker:changeme_worker@postgres_v2:5432/pqrs_v2
       - DATABASE_URL=postgresql://pqrs_admin:pg_password@postgres_v2:5432/pqrs_v2
-      - REDIS_URL=redis://redis_v2:6379
+      - REDIS_URL=redis://:NuSvuOWiQtGWkZleg-zwqUZzs6DewuaK@redis_v2:6379
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=adminminio
       - MINIO_SECRET_KEY=adminpassword
       - MINIO_PUBLIC_URL=http://54.233.39.211:9020
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
     depends_on:
       - postgres_v2
       - redis_v2
@@ -122,9 +125,9 @@ services:
     container_name: pqrs_v2_demo_worker
     command: python demo_worker.py
     environment:
-      - WORKER_DB_URL=postgresql://pqrs_admin:pg_password@postgres_v2:5432/pqrs_v2
+      - WORKER_DB_URL=postgresql://aequitas_worker:changeme_worker@postgres_v2:5432/pqrs_v2
       - DATABASE_URL=postgresql://pqrs_admin:pg_password@postgres_v2:5432/pqrs_v2
-      - REDIS_URL=redis://redis_v2:6379
+      - REDIS_URL=redis://:NuSvuOWiQtGWkZleg-zwqUZzs6DewuaK@redis_v2:6379
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - DEMO_GMAIL_USER=democlasificador@gmail.com
       - DEMO_GMAIL_PASSWORD=${DEMO_GMAIL_PASSWORD:-}
