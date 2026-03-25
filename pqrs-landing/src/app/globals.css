@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+@utility agente {
+  display: flex;
+}
+@utility agente-col {
+  flex-direction: column;
+}
+@utility agente-row {
+  flex-direction: row;
+}
+@utility agente-1 {
+  flex: 1;
+}
+@utility agente-wrap {
+  flex-wrap: wrap;
+}
+@utility inline-agente {
+  display: inline-flex;
+}
+
+@theme {
+  --color-primary: #035aa7;
+  --color-primary-glow: #021f59;
+  --color-background-dark: #021f59;
+  --color-surface-dark: #011640;
+  --color-accent: #035aa7;
+  --color-cyan: #06b6d4;
+
+  --font-display: "Inter", sans-serif;
+  --font-sans: "Inter", sans-serif;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: "Inter", sans-serif;
+    background-color: #021f59; /* Cool Black */
+    color: #ffffff;
+    overflow-x: hidden;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    background: rgba(10, 10, 10, 0.6);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .glass-nav {
+    background: rgba(2, 31, 89, 0.85);
+    backdrop-filter: blur(20px) saturate(1.3);
+    -webkit-backdrop-filter: blur(20px) saturate(1.3);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .card-hover {
+    transition: border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+  .card-hover:hover {
+    border-color: rgba(3, 90, 167, 0.4);
+    box-shadow: 0 0 20px rgba(3, 90, 167, 0.15);
+  }
+
+  /* Aurora blobs — azul muy sutil */
+  .aurora-blob {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+    will-change: transform;
+    animation: aurora-float ease-in-out infinite;
+  }
+  .aurora-1 {
+    width: 900px; height: 700px;
+    background: radial-gradient(ellipse, rgba(3, 90, 167, 0.15) 0%, transparent 70%); /* Persian Blue */
+    top: -300px; left: -200px;
+    filter: blur(80px);
+    animation-duration: 20s;
+  }
+  .aurora-2 {
+    width: 750px; height: 600px;
+    background: radial-gradient(ellipse, rgba(3, 90, 167, 0.1) 0%, transparent 70%);
+    top: 100px; right: -200px;
+    filter: blur(90px);
+    animation-duration: 26s;
+    animation-direction: reverse;
+  }
+  .aurora-3 {
+    width: 600px; height: 500px;
+    background: radial-gradient(ellipse, rgba(3, 90, 167, 0.08) 0%, transparent 70%);
+    bottom: 0px; left: 20%;
+    filter: blur(75px);
+    animation-duration: 17s;
+    animation-delay: 4s;
+  }
+
+  .dot-grid {
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(circle, rgba(255,255,255,0.04) 1px, transparent 1px);
+    background-size: 38px 38px;
+  }
+
+  /* Gradient text — Persian Blue palette */
+  .gradient-text {
+    background: linear-gradient(135deg, #035aa7 0%, #06b6d4 60%, #93c5fd 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Editorial card — sin shimmer, solo borde fino */
+  .editorial-row {
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    transition: border-color 0.3s ease;
+  }
+  .editorial-row:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .glass-card {
+    background: rgba(1, 22, 64, 0.6);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  .glass-card:hover {
+    border-color: rgba(3, 90, 167, 0.3);
+    box-shadow: 0 0 30px rgba(3, 90, 167, 0.1);
+  }
+}
+
+@keyframes aurora-float {
+  0%   { transform: translate(0px, 0px) scale(1); }
+  25%  { transform: translate(70px, -55px) scale(1.07); }
+  50%  { transform: translate(-45px, 75px) scale(0.96); }
+  75%  { transform: translate(55px, 45px) scale(1.04); }
+  100% { transform: translate(0px, 0px) scale(1); }
+}

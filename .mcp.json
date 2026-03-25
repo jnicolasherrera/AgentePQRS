@@ -1,0 +1,44 @@
+{
+  "mcpServers": {
+    "mcp-postgres-v2": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://pqrs_admin:pg_password@localhost:5433/pqrs_v2"
+      ]
+    },
+    "mcp-filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/TU_USUARIO/PQR-TUTELAS"
+      ]
+    },
+    "mcp-obsidian": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ]
+    },
+    "mcp-context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ]
+    },
+    "mcp-github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "REEMPLAZAR_CON_TU_TOKEN"
+      }
+    }
+  }
+}

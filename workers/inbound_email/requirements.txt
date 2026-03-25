@@ -1,0 +1,5 @@
+faststream[cli,kafka]
+pydantic
+sqlalchemy
+psycopg2-binary
+python-dotenv

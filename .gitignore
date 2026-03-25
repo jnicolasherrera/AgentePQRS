@@ -1,0 +1,32 @@
+# Variables de entorno — NUNCA subir
+.env
+.env.*
+
+# Archivos pesados
+*.zip
+*.tar.gz
+*.dump
+*.crdownload
+*.exe
+
+# Archivos de datos sensibles
+*.csv
+*.xlsx
+Consolidado*
+DEFCON*
+
+# Logs y temporales
+*.log
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+.next/
+
+# Backups
+backups/
+uploads/
+
+# Archivos locales
+*.bak
+*.bak2

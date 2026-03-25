@@ -1,0 +1,36 @@
+==========================================
+MIGRACIÓN A UBUNTU 24 DE PQRS_V2 (DOCKER)
+==========================================
+
+Hola. He preparado todo tu proyecto PQRS_V2 para que puedas migrarlo fácilmente a tu otra computadora (Ubuntu 24) usando Docker.
+
+Pasos a seguir:
+
+1. Lleva esta carpeta (Z:\Proyectos\PQR-TUTELAS)
+   Copia toda esta carpeta "PQR-TUTELAS" a una memoria USB, o súbela a la nube, y luego descárgala en tu computadora Ubuntu 24.
+   
+2. Abre la Terminal en Ubuntu
+   Navega a la carpeta sonde guardaste el proyecto.
+   Por ejemplo:
+   cd /ruta/donde/guardaste/PQR-TUTELAS
+
+3. Ejecuta el archivo que instalara docker y levantará todo:
+   Corre el siguiente comando para darle permisos al archivo:
+   chmod +x deploy_ubuntu.sh
+
+   Y luego ejecútalo:
+   ./deploy_ubuntu.sh
+   
+   (El script te pedirá la contraseña de administrador (`sudo`) para instalar Docker y levantar el entorno).
+
+Este script va a hacer lo siguiente, de forma automática:
+- Instalará Docker y Docker Compose para Ubuntu 24.
+- Creará las imágenes de los servicios nuevos: `backend` y `frontend`.
+- Levantará los contenedores de: PostgreSQL, Redis, Kafka, Zookeeper, MinIO, Backend y Frontend.
+
+4. Entra a tu proyecto
+   Una vez que el script termine, vas a poder entrar desde el navegador en tu Ubuntu:
+   FrontEnd: http://localhost:3000
+   Backend (API): http://localhost:8000
+
+Si ves algún log de error puedes revisarlo con el comando: `sudo docker compose logs -f frontend_v2` o de cualquiera de los otros contenedores (backend_v2, postgres_v2, etc).
