@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis_v2:6379"
     jwt_secret_key: str = "dev-key-change-in-prod"
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 120
+    access_token_expire_minutes: int = 480
     anthropic_api_key: str = ""
     kafka_bootstrap_servers: str = "kafka_v2:29092"
     microsoft_webhook_secret: str = ""   # Configurar en .env / docker-compose

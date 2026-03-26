@@ -87,6 +87,7 @@ services:
       - MINIO_SECRET_KEY=adminpassword
       - MINIO_PUBLIC_URL=http://54.233.39.211:9020
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=480
     ports:
       - "8001:8000"
     depends_on:
