@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/indice
+---
+
 # Brain -- FlexPQR / Aequitas
 
 Memoria persistente del proyecto. Leer en este orden antes de

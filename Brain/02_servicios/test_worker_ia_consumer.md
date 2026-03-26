@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/test
+---
+
 # Tests: Worker IA Consumer
 
 ## Archivo del Worker

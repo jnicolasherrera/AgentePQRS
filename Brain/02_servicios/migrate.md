@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Migraciones SQL
 
 ## Estrategia de Migracion

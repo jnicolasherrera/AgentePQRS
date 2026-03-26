@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Migracion y Modo God (Super Admin)
 
 ## Aplicar Migraciones

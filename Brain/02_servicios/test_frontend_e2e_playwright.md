@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/test
+---
+
 # Tests: Frontend E2E (Playwright)
 
 ## Estado Actual

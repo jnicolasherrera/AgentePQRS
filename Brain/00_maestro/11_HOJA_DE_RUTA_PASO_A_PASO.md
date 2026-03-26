@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/maestro
+---
+
 # Hoja de Ruta Paso a Paso -- FlexPQR
 
 ## Historial de Implementacion

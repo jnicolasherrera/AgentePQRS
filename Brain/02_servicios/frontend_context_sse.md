@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/frontend
+---
+
 # Frontend: Contexto y SSE
 
 ## Arquitectura de Estado

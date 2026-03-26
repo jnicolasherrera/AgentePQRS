@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/maestro
+---
+
 # Equipos de Agentes y Orquestacion -- FlexPQR
 
 ## Estrategia Multi-Agente

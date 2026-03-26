@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/maestro
+---
+
 # Arquitectura Maestra -- FlexPQR V2
 
 ## Vision General

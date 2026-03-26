@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/maestro
+---
+
 # Directivas Claude Code -- FlexPQR / Aequitas
 
 ## Identidad del Proyecto

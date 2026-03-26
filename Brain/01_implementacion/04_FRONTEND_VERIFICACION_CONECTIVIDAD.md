@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Frontend: Verificacion de Conectividad
 
 ## URL de Acceso

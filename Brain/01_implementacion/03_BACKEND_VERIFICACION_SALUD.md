@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Backend: Verificacion de Salud
 
 ## Endpoint de Health Check

@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/service
+---
+
 # Service: AI Classifier
 
 ## Archivo

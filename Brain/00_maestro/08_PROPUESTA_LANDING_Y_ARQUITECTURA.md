@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/maestro
+---
+
 # Propuesta Landing y Arquitectura -- FlexPQR
 
 ## Landing Page (flexpqr.com)

@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Migracion Recovery y Zoho
 
 ## Tenant Abogados Recovery

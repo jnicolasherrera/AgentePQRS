@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Filtro Global de Tenant -- FlexPQR
 
 ## Como Funciona el Aislamiento Multi-Tenant

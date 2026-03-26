@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # RBAC, RLS y Roles -- FlexPQR
 
 ## Sistema de Control de Acceso

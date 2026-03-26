@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Base de Datos: Esquema y Roles
 
 ## Archivos de Migracion

@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/frontend
+---
+
 # Frontend: Tablas Interactivas
 
 ## Estado Actual

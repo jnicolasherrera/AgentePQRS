@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Columnas Faltantes y Evoluciones de Esquema
 
 ## Columnas Agregadas Post-Migracion Inicial

@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # SLA Legal Tracking -- FlexPQR
 
 ## Normativa Colombiana

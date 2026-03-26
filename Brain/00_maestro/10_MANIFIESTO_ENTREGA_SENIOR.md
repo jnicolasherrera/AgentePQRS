@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/maestro
+---
+
 # Manifiesto de Entrega Senior -- FlexPQR
 
 ## Criterios de Aceptacion para Cualquier Feature

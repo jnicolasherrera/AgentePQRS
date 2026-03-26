@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Infraestructura: Cold Start Fixes
 
 ## Problemas Comunes al Primer Arranque

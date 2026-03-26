@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/maestro
+---
+
 # Ecosistema de Agentes y Herramientas -- FlexPQR
 
 ## Skills Disponibles

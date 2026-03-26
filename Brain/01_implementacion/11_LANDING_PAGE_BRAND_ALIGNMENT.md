@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Landing Page y Alineacion de Marca
 
 ## Directorio

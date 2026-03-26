@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/infra
+---
+
 # Infraestructura: Docker Kafka Cluster
 
 ## Servicios

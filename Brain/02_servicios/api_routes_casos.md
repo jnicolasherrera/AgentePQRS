@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/api
+---
+
 # API Routes: Casos
 
 ## Archivo

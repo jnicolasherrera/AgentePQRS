@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/worker
+---
+
 # Worker: DB Inserter
 
 ## Archivo

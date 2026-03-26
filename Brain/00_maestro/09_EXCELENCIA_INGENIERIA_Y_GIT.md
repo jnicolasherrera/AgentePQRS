@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/maestro
+---
+
 # Excelencia en Ingenieria y Git -- FlexPQR
 
 ## Estrategia de Git

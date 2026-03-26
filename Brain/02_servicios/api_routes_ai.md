@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/api
+---
+
 # API Routes: AI (Inteligencia Artificial)
 
 ## Archivo

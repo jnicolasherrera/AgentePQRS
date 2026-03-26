@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Comando Unificado -- FlexPQR
 
 ## Arranque Completo

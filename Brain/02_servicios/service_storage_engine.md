@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/service
+---
+
 # Service: Storage Engine (MinIO)
 
 ## Archivo

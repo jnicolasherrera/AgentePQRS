@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/maestro
+---
+
 # Estructura y Arquitectura Omitida -- FlexPQR
 
 ## Componentes Planificados pero No Implementados

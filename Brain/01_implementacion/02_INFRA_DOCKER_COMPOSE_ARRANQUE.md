@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Infraestructura: Docker Compose y Arranque
 
 ## Archivo Principal

@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/maestro
+---
+
 # Aprendizaje Continuo IA -- FlexPQR
 
 ## Sistema de Clasificacion Hibrida

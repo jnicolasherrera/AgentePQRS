@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/maestro
+---
+
 # Confirmacion Tecnica Sprint 0 -- FlexPQR
 
 ## Verificacion de Infraestructura Base

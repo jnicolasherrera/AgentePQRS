@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/frontend
+---
+
 # Frontend: UI Kanban
 
 ## Estado Actual

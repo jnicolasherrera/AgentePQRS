@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Infraestructura: Prerequisitos Locales
 
 ## Requisitos del Sistema

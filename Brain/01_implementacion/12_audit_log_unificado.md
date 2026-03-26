@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/implementacion
+---
+
 # Audit Log Unificado -- FlexPQR
 
 ## Tablas de Auditoria

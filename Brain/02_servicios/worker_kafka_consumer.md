@@ -1,3 +1,8 @@
+---
+tags:
+  - brain/worker
+---
+
 # Worker: Kafka Consumer (AI Consumer)
 
 ## Archivo
