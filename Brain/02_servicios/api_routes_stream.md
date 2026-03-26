@@ -56,3 +56,10 @@ location /api/v2/stream/ {
 - `sse-starlette` -- Libreria para SSE en FastAPI/Starlette
 - `redis.asyncio` -- Cliente Redis asincrono
 - `app.core.security.decode_access_token` -- Decodifica JWT sin Depends
+
+
+## Referencias
+
+- [[backend_core]]
+- [[frontend_context_sse]]
+- [[worker_kafka_consumer]]

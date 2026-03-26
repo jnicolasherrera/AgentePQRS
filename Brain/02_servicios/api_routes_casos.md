@@ -58,3 +58,11 @@ CRUD principal de casos PQRS. Incluye gestion de borradores, adjuntos de respues
 - **Adjuntos:** Descarga adjuntos de reply desde MinIO e incluye en el email
 - **Auditoria:** Registra ENVIADO_LOTE con lote_id, IP origen, email destino
 - **Efecto:** Actualiza borrador_estado='ENVIADO', estado='CERRADO'
+
+
+## Referencias
+
+- [[backend_core]]
+- [[service_ai_classifier]]
+- [[worker_kafka_consumer]]
+- [[api_routes_stream]]

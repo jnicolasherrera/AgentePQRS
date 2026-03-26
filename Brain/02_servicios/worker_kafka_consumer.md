@@ -89,3 +89,10 @@ docker compose run backend_v2 python worker_ai_consumer.py
 # O dentro del contenedor
 docker exec pqrs_v2_backend python worker_ai_consumer.py
 ```
+
+
+## Referencias
+
+- [[service_ai_classifier]]
+- [[worker_db_inserter]]
+- [[infra_docker_kafka_cluster]]

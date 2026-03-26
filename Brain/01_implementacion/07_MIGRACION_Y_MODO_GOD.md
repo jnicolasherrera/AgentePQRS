@@ -51,3 +51,10 @@ docker exec pqrs_v2_backend python seed_demo_abogado.py
 # Seed de FlexFintech
 python seed_flexfintech.py
 ```
+
+
+## Referencias
+
+- [[05_DB_ESQUEMA_Y_ROLES]]
+- [[08_MIGRACION_RECOVERY_ZOHO]]
+- [[migrate]]

@@ -47,3 +47,10 @@ Endpoints para recibir notificaciones push de proveedores de email (Microsoft Gr
 ## Variables de Entorno
 - `MICROSOFT_WEBHOOK_SECRET` -- Secreto compartido con Microsoft Graph
 - `GOOGLE_WEBHOOK_TOKEN` -- Token de canal para Google Workspace
+
+
+## Referencias
+
+- [[backend_core]]
+- [[service_kafka_producer]]
+- [[03_ONBOARDING_INTEGRACIONES]]

@@ -51,3 +51,9 @@ RootLayout (layout.tsx)
     -> {children} (paginas)
     -> ReAuthModal (condicional si sesion expiro)
 ```
+
+
+## Referencias
+
+- [[02_INFRA_DOCKER_COMPOSE_ARRANQUE]]
+- [[frontend_context_sse]]

@@ -63,3 +63,11 @@
 - [ ] TanStack Query para cache client-side
 - [ ] Virtualizacion de tablas (react-virtual)
 - [ ] Kanban board interactivo
+
+
+## Referencias
+
+- [[00_DIRECTIVAS_CLAUDE_CODE]]
+- [[01_ARQUITECTURA_MAESTRA]]
+- [[14_CONFIRMACION_TECNICA_SPRINT_0]]
+- [[13_EQUIPOS_DE_AGENTES_Y_ORQUESTACION]]

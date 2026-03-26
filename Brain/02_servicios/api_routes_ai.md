@@ -35,3 +35,11 @@ Endpoints para interactuar con el motor de IA. Permite extraer entidades de un c
 - `app.services.ai_engine` -- Motor de clasificacion hibrida y generacion de borradores
 - `app.core.db.get_db_connection` -- Pool asyncpg con contexto RLS
 - `app.core.security.get_current_user` -- Validacion JWT
+
+
+## Referencias
+
+- [[backend_core]]
+- [[service_ai_classifier]]
+- [[service_clasificador]]
+- [[service_scoring_engine]]

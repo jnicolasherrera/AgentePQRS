@@ -67,3 +67,11 @@ sudo docker compose down -v  # Borra volumes
 
 Redis esta protegido con password: se pasa via `--requirepass` en el command.
 Los clientes deben usar la URL con password: `redis://:PASSWORD@redis_v2:6379`
+
+
+## Referencias
+
+- [[01_INFRA_PREREQUISITOS_LOCAL]]
+- [[03_BACKEND_VERIFICACION_SALUD]]
+- [[04_FRONTEND_VERIFICACION_CONECTIVIDAD]]
+- [[06_INFRA_COLD_START_FIXES]]

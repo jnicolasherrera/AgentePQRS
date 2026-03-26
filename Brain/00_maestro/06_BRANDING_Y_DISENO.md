@@ -50,3 +50,10 @@ Extraida del frontend y componentes de UI:
 - **Tecnologia:** Next.js (directorio `pqrs-landing/`)
 - **Despliegue:** Vercel
 - **DNS:** flexpqr.com apunta a Vercel, si llega al VPS Nginx redirige a Vercel
+
+
+## Referencias
+
+- [[08_PROPUESTA_LANDING_Y_ARQUITECTURA]]
+- [[11_LANDING_PAGE_BRAND_ALIGNMENT]]
+- [[frontend_ui_kanban]]

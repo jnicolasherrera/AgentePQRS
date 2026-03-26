@@ -72,3 +72,9 @@ Basado en el score absoluto y el margen entre top-1 y top-2:
 ## Optimizacion
 - `@lru_cache(maxsize=512)` para compilacion de regex patterns
 - Patterns compilados una sola vez por sesion
+
+
+## Referencias
+
+- [[service_clasificador]]
+- [[service_ai_classifier]]

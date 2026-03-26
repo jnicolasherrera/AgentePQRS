@@ -73,3 +73,12 @@ USING (
 ```
 
 El backend inyecta las variables via `set_config()` antes de cada query. El worker usa `aequitas_worker` que bypasea RLS nativamente.
+
+
+## Referencias
+
+- [[10_rbac_rls_roles]]
+- [[11_sla_legal_tracking]]
+- [[12_audit_log_unificado]]
+- [[13_columnas_faltantes]]
+- [[07_MIGRACION_Y_MODO_GOD]]

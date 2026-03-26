@@ -59,3 +59,10 @@ docker exec pqrs_v2_kafka kafka-console-consumer \
   --topic pqrs.raw.emails \
   --from-beginning
 ```
+
+
+## Referencias
+
+- [[01_ARQUITECTURA_MAESTRA]]
+- [[infra_docker_ai_worker]]
+- [[service_kafka_producer]]

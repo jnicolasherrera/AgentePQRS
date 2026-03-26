@@ -54,3 +54,11 @@
 - `cliente_id UUID NOT NULL REFERENCES clientes_tenant(id) ON DELETE CASCADE` en toda tabla tenant-scoped
 - Indices en `cliente_id`, `estado`, `caso_id` para las queries mas frecuentes
 - Nombres de tablas y columnas en snake_case espanol
+
+
+## Referencias
+
+- [[01_ARQUITECTURA_MAESTRA]]
+- [[09_EXCELENCIA_INGENIERIA_Y_GIT]]
+- [[test_backend_seguridad]]
+- [[test_frontend_e2e_playwright]]

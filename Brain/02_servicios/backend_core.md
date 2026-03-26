@@ -42,3 +42,13 @@
 - SlowAPI rate limiting
 - 7 routers montados
 - Health check en `GET /`
+
+
+## Referencias
+
+- [[01_ARQUITECTURA_MAESTRA]]
+- [[api_routes_casos]]
+- [[api_routes_admin]]
+- [[api_routes_stream]]
+- [[api_routes_ai]]
+- [[api_routes_webhooks]]

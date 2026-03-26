@@ -47,3 +47,9 @@ Beneficio: Kafka no transporta payloads pesados, mantiene latencia baja.
 ## Dependencias
 - `aiokafka.AIOKafkaProducer`
 - `app.services.storage_engine.upload_file` (para Claim Check)
+
+
+## Referencias
+
+- [[infra_docker_kafka_cluster]]
+- [[worker_kafka_consumer]]

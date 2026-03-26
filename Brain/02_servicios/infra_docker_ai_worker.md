@@ -56,3 +56,10 @@ Kafka (pqrs.raw.emails)
 - asyncpg Pool: min_size=2, max_size=10 (aequitas_worker con BYPASSRLS)
 - AIOKafkaConsumer + AIOKafkaProducer (para DLQ)
 - Redis async para publish de notificaciones
+
+
+## Referencias
+
+- [[infra_docker_kafka_cluster]]
+- [[worker_kafka_consumer]]
+- [[service_ai_classifier]]

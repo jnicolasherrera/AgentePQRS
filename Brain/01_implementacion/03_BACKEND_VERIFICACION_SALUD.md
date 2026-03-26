@@ -49,3 +49,10 @@ docker exec pqrs_v2_backend curl http://localhost:8000/
 - Log `"Error al conectar al Pool PQRS V2"` -> PostgreSQL no esta arriba
 - Log `"Kafka no disponible"` -> Kafka no arranco o ZooKeeper fallo
 - HTTP 500 `"Database Pool no inicializado"` -> Pool fallo al iniciar
+
+
+## Referencias
+
+- [[02_INFRA_DOCKER_COMPOSE_ARRANQUE]]
+- [[backend_core]]
+- [[api_routes_casos]]

@@ -50,3 +50,10 @@ El endpoint `GET /api/v2/stats/dashboard` retorna:
 - SSE para nuevas cards que aparecen en tiempo real
 - Filtros por tipo, prioridad, asignado
 - Contador por columna
+
+
+## Referencias
+
+- [[frontend_context_sse]]
+- [[frontend_tablas_interactivas]]
+- [[09_COMANDO_UNIFICADO]]

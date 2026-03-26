@@ -49,3 +49,9 @@
 - Insercion de casos por tenant
 - Aislamiento: queries desde un tenant no ven datos del otro
 - Super admin bypass funciona
+
+
+## Referencias
+
+- [[backend_core]]
+- [[02_ESTANDARES_CODING]]

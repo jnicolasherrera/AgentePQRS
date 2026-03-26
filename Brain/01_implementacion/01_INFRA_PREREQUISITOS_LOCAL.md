@@ -58,3 +58,9 @@ DEMO_GMAIL_PASSWORD=...
 | Nginx HTTPS | 443         | 443              |
 
 Asegurar que estos puertos no esten en uso antes de arrancar.
+
+
+## Referencias
+
+- [[02_INFRA_DOCKER_COMPOSE_ARRANQUE]]
+- [[05_DB_ESQUEMA_Y_ROLES]]

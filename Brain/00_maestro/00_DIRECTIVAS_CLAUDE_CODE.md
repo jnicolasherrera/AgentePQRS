@@ -39,3 +39,10 @@
 - `analista` -- Abogado/analista que trabaja los casos
 - `auditor` -- Solo lectura para auditoria
 - `bot` -- Cuenta de servicio para workers automaticos
+
+
+## Referencias
+
+- [[01_ARQUITECTURA_MAESTRA]]
+- [[09_EXCELENCIA_INGENIERIA_Y_GIT]]
+- [[13_EQUIPOS_DE_AGENTES_Y_ORQUESTACION]]

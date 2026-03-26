@@ -53,3 +53,10 @@ LIMIT 1
 
 ## Nota sobre Trazabilidad
 El `correlation_id` generado en el webhook/ingesta se preserva en la insercion, permitiendo trazabilidad end-to-end desde la recepcion hasta la notificacion SSE.
+
+
+## Referencias
+
+- [[worker_kafka_consumer]]
+- [[backend_core]]
+- [[10_rbac_rls_roles]]

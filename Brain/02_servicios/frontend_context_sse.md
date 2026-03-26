@@ -53,3 +53,10 @@ El token se pasa como query parameter porque EventSource no soporta headers cust
 - Email prefillado (read-only) del usuario actual
 - Toggle de visibilidad de password
 - Boton de "Cerrar sesion" como alternativa
+
+
+## Referencias
+
+- [[api_routes_stream]]
+- [[frontend_ui_kanban]]
+- [[frontend_tablas_interactivas]]

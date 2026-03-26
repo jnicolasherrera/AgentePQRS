@@ -61,3 +61,11 @@ La tabla `config_buzones` permite agregar buzones de email por tenant sin cambia
 | zoho_refresh_token  | Token de refresco para Zoho Mail API              |
 | zoho_account_id     | ID de cuenta Zoho                                 |
 | is_active           | Activar/desactivar sin borrar                     |
+
+
+## Referencias
+
+- [[01_ARQUITECTURA_MAESTRA]]
+- [[api_routes_webhooks]]
+- [[service_zoho_engine]]
+- [[infra_docker_kafka_cluster]]

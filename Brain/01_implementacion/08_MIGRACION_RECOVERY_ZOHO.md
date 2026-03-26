@@ -42,3 +42,10 @@ python 09_seed_plantillas_recovery.py
 ```
 
 Esto inserta las plantillas como registros en la tabla `plantillas_respuesta`, permitiendo que el `plantilla_engine.py` las detecte via la funcion `obtener_plantilla()`.
+
+
+## Referencias
+
+- [[07_MIGRACION_Y_MODO_GOD]]
+- [[service_zoho_engine]]
+- [[09_ONBOARDING_FLEXFINTECH]]

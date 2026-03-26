@@ -48,3 +48,11 @@ Los adjuntos grandes viajan en MinIO, no en Kafka. El classifier los descarga pa
 - `app.services.ai_engine.clasificar_hibrido` -- Motor hibrido de clasificacion
 - `app.services.storage_engine.download_file` -- Descarga desde MinIO
 - `app.core.config.PLAZOS_DIAS_HABILES, PRIORIDADES` -- Business rules
+
+
+## Referencias
+
+- [[service_clasificador]]
+- [[service_scoring_engine]]
+- [[worker_kafka_consumer]]
+- [[05_APRENDIZAJE_CONTINUO_IA]]

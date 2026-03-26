@@ -46,3 +46,10 @@
 | SOLICITUD    | 10          | MEDIA     |
 | CONSULTA     | 30          | BAJA      |
 | FELICITACION | 5           | BAJA      |
+
+
+## Referencias
+
+- [[03_ONBOARDING_INTEGRACIONES]]
+- [[08_MIGRACION_RECOVERY_ZOHO]]
+- [[service_zoho_engine]]

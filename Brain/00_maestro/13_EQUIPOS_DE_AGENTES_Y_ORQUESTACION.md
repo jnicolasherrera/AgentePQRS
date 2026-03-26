@@ -49,3 +49,10 @@ FlexPQR esta disenado para ser desarrollado y mantenido con asistencia de agente
 - Cambios en esquema SQL requieren migracion numerada nueva
 - Cambios en docker-compose.yml requieren verificar que todos los servicios arranquen
 - Todo feature debe pasar por los criterios del Manifiesto de Entrega
+
+
+## Referencias
+
+- [[00_DIRECTIVAS_CLAUDE_CODE]]
+- [[11_HOJA_DE_RUTA_PASO_A_PASO]]
+- [[12_ECOSISTEMA_AGENTE_Y_HERRAMIENTAS]]

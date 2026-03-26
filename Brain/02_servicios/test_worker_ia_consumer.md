@@ -52,3 +52,9 @@ from worker_ai_consumer import _process_message
 - Redis client
 - Anthropic API (para evitar costos en tests)
 - MinIO client (para Claim Check)
+
+
+## Referencias
+
+- [[worker_kafka_consumer]]
+- [[service_ai_classifier]]

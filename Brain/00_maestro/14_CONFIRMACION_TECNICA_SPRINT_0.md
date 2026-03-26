@@ -54,3 +54,11 @@
 - [x] Volumes persistentes para postgres, redis, minio
 - [x] Health checks en postgres y minio
 - [x] restart: unless-stopped en workers
+
+
+## Referencias
+
+- [[10_rbac_rls_roles]]
+- [[11_sla_legal_tracking]]
+- [[12_audit_log_unificado]]
+- [[05_DB_ESQUEMA_Y_ROLES]]

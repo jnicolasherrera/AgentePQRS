@@ -75,3 +75,13 @@ Email (Outlook/Zoho) -> Webhook/Worker -> Kafka (pqrs.raw.emails)
 | demo_worker_v2     | --          | Worker demo con reset periodico          |
 | frontend_v2        | 3002        | Next.js 14                               |
 | nginx_ssl          | 80/443      | Reverse proxy + SSL                      |
+
+
+## Referencias
+
+- [[00_DIRECTIVAS_CLAUDE_CODE]]
+- [[02_ESTANDARES_CODING]]
+- [[backend_core]]
+- [[frontend_context_sse]]
+- [[infra_docker_kafka_cluster]]
+- [[service_ai_classifier]]

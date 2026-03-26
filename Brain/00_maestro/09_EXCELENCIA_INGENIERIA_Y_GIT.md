@@ -43,3 +43,10 @@
 - Kafka producer con `enable_idempotence=True` y `acks=all`
 - Redis dedup de webhooks con `webhook:msgid:{id}`
 - Consumer commit manual solo despues de persistencia exitosa o DLQ
+
+
+## Referencias
+
+- [[00_DIRECTIVAS_CLAUDE_CODE]]
+- [[02_ESTANDARES_CODING]]
+- [[14_CONFIRMACION_TECNICA_SPRINT_0]]

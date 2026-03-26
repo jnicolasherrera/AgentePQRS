@@ -49,3 +49,10 @@ npm init playwright@latest
 - Seed de usuario admin y analista
 - Seed de casos de prueba
 - Mock de servicios externos (Zoho, Anthropic)
+
+
+## Referencias
+
+- [[frontend_context_sse]]
+- [[frontend_ui_kanban]]
+- [[02_ESTANDARES_CODING]]

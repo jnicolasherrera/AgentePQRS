@@ -59,3 +59,11 @@ Cada problematica se mapea a una plantilla en `plantillas_respuesta` por tenant.
 - Dominios bloqueados: litigando.com, hablame.co, noreply@, etc.
 - Asuntos bloqueados: "generacion de demanda", "marketing", "newsletter", etc.
 - Funcion `parece_pqrs()` combina anti-spam + scores para determinar si el email es una PQR real
+
+
+## Referencias
+
+- [[service_ai_classifier]]
+- [[service_clasificador]]
+- [[service_scoring_engine]]
+- [[worker_kafka_consumer]]

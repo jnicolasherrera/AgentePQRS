@@ -61,3 +61,9 @@ Combina anti-spam + scoring para determinar si el email es PQR real:
 @cendoj.ramajudicial.gov.co, @notificacionesrj.gov.co, @consejodeestado.gov.co, @cortesuprema.gov.co, @corteconstitucional.gov.co, @ramajudicial.gov.co, @fiscalia.gov.co, @procuraduria.gov.co
 
 Tambien keywords: juzgado, tribunal, corte, judicial, magistrad
+
+
+## Referencias
+
+- [[service_ai_classifier]]
+- [[service_scoring_engine]]
