@@ -218,10 +218,13 @@ async def get_caso_detalle(
     conn=Depends(get_db_connection),
 ) -> Dict[str, Any]:
     caso = await conn.fetchrow(
-        """SELECT id, cliente_id, email_origen, asunto, cuerpo, estado, nivel_prioridad,
-                  fecha_recibido, tipo_caso, fecha_vencimiento,
-                  borrador_respuesta, borrador_estado, problematica_detectada
-           FROM pqrs_casos WHERE id = $1""",
+        """SELECT c.id, c.cliente_id, c.email_origen, c.asunto, c.cuerpo, c.estado, c.nivel_prioridad,
+                  c.fecha_recibido, c.tipo_caso, c.fecha_vencimiento,
+                  c.borrador_respuesta, c.borrador_estado, c.problematica_detectada,
+                  c.asignado_a, u.nombre AS asignado_nombre
+           FROM pqrs_casos c
+           LEFT JOIN usuarios u ON u.id = c.asignado_a
+           WHERE c.id = $1""",
         uuid.UUID(caso_id),
     )
     if not caso:
@@ -260,6 +263,8 @@ async def get_caso_detalle(
         "borrador_respuesta": caso["borrador_respuesta"],
         "borrador_estado": caso["borrador_estado"],
         "problematica_detectada": caso["problematica_detectada"],
+        "asignado_a": str(caso["asignado_a"]) if caso["asignado_a"] else None,
+        "asignado_nombre": caso["asignado_nombre"],
         "comentarios": comentarios,
         "archivos": [
             {
@@ -313,13 +318,34 @@ async def update_caso(
         updates.append(f"estado = ${len(values)+1}"); values.append(payload["estado"])
     if "prioridad" in payload:
         updates.append(f"nivel_prioridad = ${len(values)+1}"); values.append(payload["prioridad"])
+    if "asignado_a" in payload:
+        usuario_destino = await conn.fetchrow(
+            """SELECT id FROM usuarios
+               WHERE id = $1 AND cliente_id = $2 AND is_active = TRUE""",
+            uuid.UUID(payload["asignado_a"]),
+            uuid.UUID(current_user.tenant_uuid),
+        )
+        if not usuario_destino:
+            raise HTTPException(status_code=400, detail="Usuario destino no válido")
+        updates.append(f"asignado_a = ${len(values)+1}")
+        values.append(uuid.UUID(payload["asignado_a"]))
     if not updates:
         return {"status": "ok", "message": "No changes"}
+    updates.append(f"updated_at = NOW()")
     values.append(uuid.UUID(caso_id))
     updated_id = await conn.fetchval(
         f"UPDATE pqrs_casos SET {', '.join(updates)} WHERE id = ${len(values)} RETURNING id", *values)
     if not updated_id:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
+    if "asignado_a" in payload:
+        await conn.execute(
+            """INSERT INTO audit_log_respuestas
+               (caso_id, usuario_id, accion, metadata)
+               VALUES ($1, $2, 'REASIGNADO', $3)""",
+            uuid.UUID(caso_id),
+            uuid.UUID(current_user.usuario_id),
+            json.dumps({"asignado_a": payload["asignado_a"]}),
+        )
     return {"status": "ok", "id": str(updated_id)}
 
 

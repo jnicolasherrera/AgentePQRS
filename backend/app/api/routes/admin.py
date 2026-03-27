@@ -63,7 +63,8 @@ async def get_team(
         raise HTTPException(status_code=403, detail="Solo administradores")
     rows = await conn.fetch(
         """SELECT id, nombre, email, rol, is_active, created_at
-           FROM usuarios WHERE cliente_id = $1 AND rol = 'analista'
+           FROM usuarios WHERE cliente_id = $1 AND is_active = TRUE
+             AND rol IN ('analista', 'abogado', 'coordinador', 'admin')
            ORDER BY nombre ASC""",
         current_user.tenant_uuid
     )

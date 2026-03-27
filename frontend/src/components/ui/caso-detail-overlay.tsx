@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Clock, Save, Send, ShieldAlert, Mail, MessageSquare, Download, CheckCircle, BrainCircuit, XCircle } from "lucide-react";
+import { X, Clock, Save, Send, ShieldAlert, Mail, MessageSquare, Download, CheckCircle, BrainCircuit, XCircle, UserCheck } from "lucide-react";
 import { api, useAuthStore } from "@/store/authStore";
 
 interface CasoDetailOverlayProps {
@@ -25,6 +25,14 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
   const [replyFiles, setReplyFiles] = useState<{id: string; nombre: string; tamano: number}[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [showComments, setShowComments] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<{id: string; nombre: string; email: string}[]>([]);
+  const [showAssignDropdown, setShowAssignDropdown] = useState(false);
+
+  useEffect(() => {
+    if (isAdmin) {
+      api.get("/admin/team").then(res => setTeamMembers(res.data)).catch(() => {});
+    }
+  }, [isAdmin]);
 
   useEffect(() => {
     if (casoId) {
@@ -53,6 +61,22 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
       onStatusChange?.(casoId!, { [field]: value });
     } catch (error) {
        console.error("Error updating", error);
+    }
+  };
+
+  const handleReassign = async (userId: string) => {
+    try {
+      await api.patch(`/casos/${casoId}`, { asignado_a: userId });
+      const member = teamMembers.find(m => m.id === userId);
+      setData((prev: any) => ({
+        ...prev,
+        asignado_a: userId,
+        asignado_nombre: member?.nombre || null,
+      }));
+      onStatusChange?.(casoId!, { asignado_nombre: member?.nombre || null });
+      setShowAssignDropdown(false);
+    } catch (error) {
+      console.error("Error reasignando caso", error);
     }
   };
 
@@ -219,6 +243,37 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
                       </button>
                     ))}
                   </div>
+
+                  {isAdmin && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowAssignDropdown(!showAssignDropdown)}
+                        className="agente items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 transition-all"
+                      >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        {data.asignado_nombre || "Sin asignar"}
+                      </button>
+                      {showAssignDropdown && (
+                        <div className="absolute top-full mt-1 right-0 w-64 bg-[#0d1117] border border-white/10 rounded-xl shadow-2xl z-50 py-1 max-h-60 overflow-y-auto">
+                          {teamMembers.map(m => (
+                            <button
+                              key={m.id}
+                              onClick={() => handleReassign(m.id)}
+                              className={`w-full text-left px-4 py-2 text-sm hover:bg-white/5 transition-colors ${
+                                data.asignado_a === m.id ? "text-primary font-bold" : "text-slate-300"
+                              }`}
+                            >
+                              <p className="font-medium">{m.nombre}</p>
+                              <p className="text-xs text-slate-500">{m.email}</p>
+                            </button>
+                          ))}
+                          {teamMembers.length === 0 && (
+                            <p className="px-4 py-3 text-xs text-slate-500">No hay miembros del equipo</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {data.fecha_vencimiento && (
                     <span className="text-xs font-bold text-slate-300 bg-white/5 px-3 py-1 rounded-lg border border-white/10">
