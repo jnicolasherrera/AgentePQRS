@@ -50,28 +50,63 @@ tags:
 Ejemplo: `WHERE rol IN ('analista', 'abogado')` o `user?.rol === "analista" || user?.rol === "abogado"`.
 
 
-## Deploy en Produccion (18.228.54.9)
+## Regla de Deploy — STAGING OBLIGATORIO
+
+> **PROHIBIDO deployar directamente a produccion.**
+> Todo cambio debe pasar primero por staging.
+> Un agente que toque produccion sin pasar por staging esta violando esta directiva.
+
+### Flujo obligatorio
+
+```
+develop → staging → (verificar) → main → produccion
+```
+
+1. **Desarrollar en `develop`** — Commits de features, fixes, docs
+2. **Merge a `staging`** — `git checkout staging && git merge develop && git push`
+3. **Deploy a staging** — Verificar en entorno staging que todo funciona
+4. **Merge a `main`** — Solo despues de QA en staging
+5. **Deploy a produccion** — Solo desde `main`
+
+### Branch strategy actualizada
+
+| Branch | Proposito | Deploy |
+|--------|-----------|--------|
+| `develop` | Desarrollo activo | Local |
+| `staging` | QA y verificacion | Staging server |
+| `main` | Produccion estable | Produccion (18.228.54.9) |
+
+### Deploy en Staging
 
 ```bash
-# Conectar al servidor
+ssh -i ~/.ssh/flexpqr-prod.pem ubuntu@18.228.54.9
+cd ~/PQRS_V2_STAGING
+
+git pull origin staging
+
+# Backend y workers
+docker compose -f docker-compose.staging.yml up -d --build
+
+# Frontend (mismo procedimiento especial)
+docker exec pqrs_staging_frontend sh -c 'cd /app && npm run build'
+docker compose -f docker-compose.staging.yml restart frontend_staging
+```
+
+### Deploy en Produccion (solo desde main, solo despues de staging)
+
+```bash
 ssh -i ~/.ssh/flexpqr-prod.pem ubuntu@18.228.54.9
 cd ~/PQRS_V2
 
-# Pull de cambios
-git pull origin develop
+git pull origin main
 
-# Levantar con rebuild — backend y workers
+# Backend y workers
 docker compose up -d --build backend_v2
 docker compose up -d --build master_worker_v2
 
 # FRONTEND — procedimiento especial obligatorio
-# docker compose up --build NO funciona para el frontend porque los volumenes
-# de desarrollo (bind mount ./frontend:/app + anonymous volume /app/.next)
-# sobrescriben el .next del Dockerfile.
-# SIEMPRE usar este procedimiento para deployar cambios de frontend:
 docker exec pqrs_v2_frontend sh -c 'cd /app && npm run build'
 docker compose restart frontend_v2
-# Verificar que levanto correctamente:
 docker logs pqrs_v2_frontend --tail=20
 
 # Backup de base de datos (antes de cualquier cambio en DB)
