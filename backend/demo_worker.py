@@ -302,20 +302,21 @@ async def demo_worker():
                     )
 
             # ── Reset: eliminar casos demo más viejos que RESET_MINUTES ──────
-            deleted = await conn.fetchval(
-                """WITH d AS (
-                       DELETE FROM pqrs_casos
-                       WHERE cliente_id = $1
-                         AND external_msg_id IS NOT NULL
-                         AND created_at < NOW() - make_interval(mins => $2)
-                       RETURNING id
-                   )
-                   SELECT COUNT(*) FROM d""",
+            old_ids = await conn.fetch(
+                """SELECT id FROM pqrs_casos
+                   WHERE cliente_id = $1
+                     AND external_msg_id IS NOT NULL
+                     AND created_at < NOW() - make_interval(mins => $2)""",
                 DEMO_TENANT_ID,
                 RESET_MINUTES,
             )
-            if deleted:
-                logger.info(f"🗑️  Demo reset: {deleted} caso(s) eliminado(s) (>{RESET_MINUTES} min)")
+            if old_ids:
+                ids = [r["id"] for r in old_ids]
+                await conn.execute("DELETE FROM audit_log_respuestas WHERE caso_id = ANY($1::uuid[])", ids)
+                await conn.execute("DELETE FROM pqrs_comentarios WHERE caso_id = ANY($1::uuid[])", ids)
+                await conn.execute("DELETE FROM pqrs_adjuntos WHERE caso_id = ANY($1::uuid[])", ids)
+                await conn.execute("DELETE FROM pqrs_casos WHERE id = ANY($1::uuid[])", ids)
+                logger.info(f"🗑️  Demo reset: {len(ids)} caso(s) eliminado(s) (>{RESET_MINUTES} min)")
 
         except Exception as e:
             logger.error(f"💥 Demo Worker error: {e}")
