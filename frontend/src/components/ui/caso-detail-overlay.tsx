@@ -14,6 +14,7 @@ interface CasoDetailOverlayProps {
 export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetailOverlayProps) {
   const { user } = useAuthStore();
   const isAdmin = user?.rol === "admin" || user?.rol === "super_admin";
+  const canReassign = isAdmin || user?.rol === "coordinador";
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [comentarioTexto, setComentarioTexto] = useState("");
@@ -29,10 +30,12 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
   const [showAssignDropdown, setShowAssignDropdown] = useState(false);
 
   useEffect(() => {
-    if (isAdmin) {
-      api.get("/admin/team").then(res => setTeamMembers(res.data)).catch(() => {});
+    if (canReassign) {
+      api.get("/admin/team")
+        .then(res => setTeamMembers(res.data))
+        .catch(err => console.error("Error cargando equipo:", err));
     }
-  }, [isAdmin]);
+  }, [canReassign]);
 
   useEffect(() => {
     if (casoId) {
@@ -244,7 +247,7 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
                     ))}
                   </div>
 
-                  {isAdmin && (
+                  {canReassign && (
                     <div className="relative">
                       <button
                         onClick={() => setShowAssignDropdown(!showAssignDropdown)}

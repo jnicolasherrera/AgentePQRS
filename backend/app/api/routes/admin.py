@@ -59,8 +59,8 @@ async def get_team(
     current_user: UserInToken = Depends(get_current_user),
     conn = Depends(get_db_connection)
 ) -> List[Dict[str, Any]]:
-    if current_user.role not in ['admin', 'super_admin']:
-        raise HTTPException(status_code=403, detail="Solo administradores")
+    if current_user.role not in ['admin', 'super_admin', 'coordinador']:
+        raise HTTPException(status_code=403, detail="Acceso denegado")
     rows = await conn.fetch(
         """SELECT id, nombre, email, rol, is_active, created_at
            FROM usuarios WHERE cliente_id = $1 AND is_active = TRUE
