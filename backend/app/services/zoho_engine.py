@@ -41,6 +41,10 @@ class ZohoServiceV2:
     # Backoff compartido entre instancias, keyed by refresh_token
     _backoff_registry: dict = {}
 
+    _last_send_times: list = []
+    _SEND_INTERVAL = 3.0
+    _MAX_PER_MINUTE = 15
+
     def __init__(self, client_id, client_secret, refresh_token, account_id=None):
         self.client_id = client_id
         self.client_secret = client_secret
@@ -152,11 +156,31 @@ class ZohoServiceV2:
             json_data={"mode": "markAsRead", "messageId": [message_id]}
         )
 
+    def _rate_limit_send(self):
+        """Esperar si es necesario antes de enviar para no disparar el bloqueo de Zoho."""
+        import time
+        now = time.time()
+        ZohoServiceV2._last_send_times = [
+            t for t in ZohoServiceV2._last_send_times if now - t < 60
+        ]
+        if len(ZohoServiceV2._last_send_times) >= ZohoServiceV2._MAX_PER_MINUTE:
+            oldest = ZohoServiceV2._last_send_times[0]
+            wait = 60 - (now - oldest) + 1
+            if wait > 0:
+                logger.warning(f"Zoho rate limit: esperando {wait:.1f}s para no exceder {ZohoServiceV2._MAX_PER_MINUTE} emails/min")
+                time.sleep(wait)
+        if ZohoServiceV2._last_send_times:
+            elapsed = now - ZohoServiceV2._last_send_times[-1]
+            if elapsed < ZohoServiceV2._SEND_INTERVAL:
+                time.sleep(ZohoServiceV2._SEND_INTERVAL - elapsed)
+        ZohoServiceV2._last_send_times.append(time.time())
+
     def send_reply(self, to_email: str, subject: str, body: str, from_address: str,
                    adjuntos: list | None = None) -> bool:
         """Envía un email de respuesta HTML con firma institucional vía Zoho Mail API.
         adjuntos: lista de {nombre, content (bytes), content_type}
         """
+        self._rate_limit_send()
         firma = _firma_html()
         html_body = (
             "<div style='font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6'>"
@@ -212,6 +236,7 @@ class ZohoServiceV2:
         nombre_entidad: str = "FlexLegal",
     ) -> bool:
         """Envía acuse de recibo HTML al ciudadano/cliente al radicar su caso."""
+        self._rate_limit_send()
         TONOS = {
             "TUTELA":    ("Acción de Tutela",    "#DC2626", "Su caso fue escalado al área jurídica con carácter urgente."),
             "PETICION":  ("Derecho de Petición", "#2563EB", "Su petición fue radicada y asignada al equipo responsable."),

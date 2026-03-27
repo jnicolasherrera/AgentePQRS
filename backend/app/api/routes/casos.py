@@ -42,32 +42,34 @@ def _firma_html() -> str:
         return ""
 
 
-def _send_via_gmail(to_email: str, subject: str, body: str) -> bool:
-    """Fallback SMTP para tenants sin Zoho configurado (demo)."""
-    gmail_user = os.environ.get("DEMO_GMAIL_USER", "")
-    gmail_pass = os.environ.get("DEMO_GMAIL_PASSWORD", "")
-    if not gmail_user or not gmail_pass:
+def _send_via_smtp_fallback(to_email: str, subject: str, body: str) -> bool:
+    """Fallback SMTP cuando Zoho falla. Usa SMTP_FALLBACK_* env vars, cae a Gmail demo si no hay."""
+    smtp_host = os.environ.get("SMTP_FALLBACK_HOST", "smtp.gmail.com")
+    smtp_port = int(os.environ.get("SMTP_FALLBACK_PORT", "465"))
+    smtp_user = os.environ.get("SMTP_FALLBACK_USER", os.environ.get("DEMO_GMAIL_USER", ""))
+    smtp_pass = os.environ.get("SMTP_FALLBACK_PASS", os.environ.get("DEMO_GMAIL_PASSWORD", ""))
+    if not smtp_user or not smtp_pass:
+        logger.error("SMTP fallback no configurado — envío perdido para: " + to_email)
         return False
     try:
         firma = _firma_html()
         html_body = (
             "<div style='font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6'>"
-            + _md_to_html(body)
-            + firma
-            + "</div>"
+            + _md_to_html(body) + firma + "</div>"
         )
         msg = MIMEMultipart("alternative")
-        msg["From"]    = f"FlexPQR <{gmail_user}>"
-        msg["To"]      = to_email
+        msg["From"] = f"FlexPQR <{smtp_user}>"
+        msg["To"] = to_email
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "plain", "utf-8"))
         msg.attach(MIMEText(html_body, "html", "utf-8"))
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(gmail_user, gmail_pass)
-            server.sendmail(gmail_user, to_email, msg.as_string())
+        with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, to_email, msg.as_string())
+        logger.warning(f"Email enviado via SMTP fallback → {to_email}")
         return True
     except Exception as e:
-        logging.getLogger("CASOS_ROUTER").error(f"Gmail SMTP fallback error: {e}")
+        logger.error(f"SMTP fallback también falló: {e}")
         return False
 
 logger = logging.getLogger("CASOS_ROUTER")
@@ -515,11 +517,22 @@ async def aprobar_lote(
                     })
 
             subject = f"Re: {caso['asunto']}"
+            ok = False
+            metodo_envio = "ninguno"
             if zoho:
-                ok = zoho.send_reply(caso["email_origen"], subject, caso["borrador_respuesta"],
-                                     buzon["email_buzon"], adjuntos=adjuntos_data or None)
-            else:
-                ok = _send_via_gmail(caso["email_origen"], subject, caso["borrador_respuesta"])
+                try:
+                    ok = zoho.send_reply(caso["email_origen"], subject, caso["borrador_respuesta"],
+                                         buzon["email_buzon"], adjuntos=adjuntos_data or None)
+                    if ok:
+                        metodo_envio = "zoho"
+                    else:
+                        logger.warning(f"Zoho retornó False para caso {cid} — intentando fallback SMTP")
+                except Exception as zoho_err:
+                    logger.error(f"Zoho excepción caso {cid}: {zoho_err} — intentando fallback SMTP")
+            if not ok:
+                ok = _send_via_smtp_fallback(caso["email_origen"], subject, caso["borrador_respuesta"])
+                if ok:
+                    metodo_envio = "smtp_fallback"
             if ok:
                 await conn.execute(
                     """UPDATE pqrs_casos SET borrador_estado='ENVIADO', estado='CERRADO',
@@ -532,7 +545,7 @@ async def aprobar_lote(
                        VALUES ($1,$2,'ENVIADO_LOTE',$3,$4,$5)""",
                     caso["id"], uuid.UUID(current_user.usuario_id), lote_id, ip,
                     json.dumps({"email_destino": caso["email_origen"], "asunto": subject,
-                                "lote_size": len(body.caso_ids)}),
+                                "lote_size": len(body.caso_ids), "metodo_envio": metodo_envio}),
                 )
                 enviados.append(cid)
             else:

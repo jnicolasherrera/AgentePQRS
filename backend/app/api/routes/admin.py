@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from app.core.db import get_db_connection
 from app.core.security import get_current_user, UserInToken, verify_password, get_password_hash
+from app.services.zoho_engine import ZohoServiceV2
 
 router = APIRouter()
 
@@ -270,3 +271,36 @@ async def listar_clientes(
             "is_active": r["is_active"]
         } for r in rows
     ]
+
+
+@router.get("/zoho/health")
+async def zoho_health_check(
+    current_user: UserInToken = Depends(get_current_user),
+    conn=Depends(get_db_connection),
+):
+    if current_user.role not in ("admin", "super_admin", "coordinador"):
+        raise HTTPException(status_code=403, detail="Sin permisos")
+    buzon = await conn.fetchrow(
+        """SELECT email_buzon, azure_client_id, azure_client_secret,
+                  zoho_refresh_token, zoho_account_id
+           FROM config_buzones
+           WHERE cliente_id=$1 AND proveedor='ZOHO' AND is_active=TRUE LIMIT 1""",
+        uuid.UUID(current_user.tenant_uuid),
+    )
+    if not buzon:
+        return {"status": "sin_configuracion", "puede_enviar": False,
+                "mensaje": "No hay buzon Zoho configurado para este tenant"}
+    try:
+        zoho = ZohoServiceV2(
+            buzon["azure_client_id"], buzon["azure_client_secret"],
+            buzon["zoho_refresh_token"], buzon["zoho_account_id"],
+        )
+        token = zoho._get_access_token()
+        if token:
+            return {"status": "operativo", "email_buzon": buzon["email_buzon"],
+                    "puede_enviar": True, "mensaje": "Zoho responde correctamente"}
+        return {"status": "error_auth", "email_buzon": buzon["email_buzon"],
+                "puede_enviar": False, "mensaje": "No se pudo obtener access token"}
+    except Exception as e:
+        return {"status": "error", "email_buzon": buzon["email_buzon"],
+                "puede_enviar": False, "mensaje": str(e)}

@@ -167,6 +167,18 @@ docker compose restart frontend_v2
 **Fix definitivo pendiente:** Crear un docker-compose.prod.yml sin los volumenes
 de desarrollo y usar `docker compose -f docker-compose.prod.yml up -d --build`.
 
+### Zoho — Bloqueo por actividad inusual (27/03/2026)
+**Sintoma:** Envios de email retornan False silenciosamente.
+Abogados firman casos pero ciudadanos no reciben respuesta.
+**Causa:** Zoho detecta rafagas de envio y bloquea la cuenta (error 550 5.4.6).
+**Solucion implementada:**
+- Rate limiting: max 15 emails/min, 3s entre cada envio (zoho_engine.py)
+- Fallback SMTP: si Zoho falla, reintenta por SMTP configurado en env vars
+- Health check: GET /api/v2/admin/zoho/health para verificar estado
+**Variables de entorno para SMTP fallback:**
+  SMTP_FALLBACK_HOST, SMTP_FALLBACK_PORT, SMTP_FALLBACK_USER, SMTP_FALLBACK_PASS
+**Desbloqueo manual:** https://mail.zoho.com/UnblockMe
+
 ## Referencias
 
 - [[01_ARQUITECTURA_MAESTRA]]
