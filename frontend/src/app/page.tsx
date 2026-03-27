@@ -13,6 +13,7 @@ import { EnviadosTab } from "@/components/ui/enviados-tab";
 import { AdminBandeja } from "@/components/ui/admin-bandeja";
 import { useAdminClientes } from "@/hooks/useDashboardStats";
 import { ToastContainer } from "@/components/ui/toast-urgente";
+import { ChangePasswordModal } from "@/components/ui/change-password-modal";
 import { useSSEStream } from "@/hooks/useSSEStream";
 import type { ToastData } from "@/components/ui/toast-urgente";
 
@@ -28,14 +29,22 @@ const TAB_TITLE: Record<string, string> = {
 };
 
 export default function DashboardPage() {
-  const { isAuthenticated, user, logout } = useAuthStore();
+  const { isAuthenticated, user, logout, setAuth } = useAuthStore();
   const [mounted, setMounted] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   useEffect(() => { setMounted(true); }, []);
   useEffect(() => {
     if (!mounted) return;
     if (!isAuthenticated) window.location.href = "/login";
   }, [mounted, isAuthenticated]);
+
+  // Mostrar modal de cambio de password si es primer inicio
+  useEffect(() => {
+    if (mounted && user?.debe_cambiar_password) {
+      setShowChangePassword(true);
+    }
+  }, [mounted, user?.debe_cambiar_password]);
 
   const isAbogado = user?.rol === "analista";
 
@@ -215,6 +224,10 @@ export default function DashboardPage() {
         toasts={toasts}
         onRemove={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
       />
+
+      {showChangePassword && (
+        <ChangePasswordModal onSuccess={() => setShowChangePassword(false)} />
+      )}
     </div>
   );
 }
