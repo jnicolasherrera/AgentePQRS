@@ -1,0 +1,108 @@
+services:
+  postgres_staging:
+    image: postgres:15-alpine
+    container_name: pqrs_staging_db
+    environment:
+      POSTGRES_USER: pqrs_admin
+      POSTGRES_PASSWORD: pg_password_staging
+      POSTGRES_DB: pqrs_staging
+    ports:
+      - "5435:5432"
+    volumes:
+      - pg_staging_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pqrs_admin -d pqrs_staging"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis_staging:
+    image: redis:7-alpine
+    container_name: pqrs_staging_redis
+    ports:
+      - "6382:6379"
+    volumes:
+      - redis_staging_data:/data
+    command: redis-server --save 60 1 --loglevel warning --requirepass staging_redis_pass
+
+  zookeeper_staging:
+    image: confluentinc/cp-zookeeper:7.3.0
+    container_name: pqrs_staging_zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2183:2181"
+
+  kafka_staging:
+    image: confluentinc/cp-kafka:7.3.0
+    container_name: pqrs_staging_kafka
+    depends_on:
+      - zookeeper_staging
+    ports:
+      - "9094:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper_staging:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka_staging:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  minio_staging:
+    image: minio/minio
+    container_name: pqrs_staging_minio
+    hostname: minio_staging
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: adminminio
+      MINIO_ROOT_PASSWORD: adminpassword
+      MINIO_ACCESS_KEY: adminminio
+      MINIO_SECRET_KEY: adminpassword
+    ports:
+      - "9030:9000"
+      - "9031:9001"
+    volumes:
+      - minio_staging_data:/data
+
+  backend_staging:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pqrs_staging_backend
+    environment:
+      - DATABASE_URL=postgresql://pqrs_admin:pg_password_staging@postgres_staging:5432/pqrs_staging
+      - REDIS_URL=redis://:staging_redis_pass@redis_staging:6379
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-staging_jwt_secret_change_me}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka_staging:29092
+      - MINIO_ENDPOINT=minio_staging:9000
+      - MINIO_ACCESS_KEY=adminminio
+      - MINIO_SECRET_KEY=adminpassword
+      - MINIO_PUBLIC_URL=http://localhost:9030
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=480
+    ports:
+      - "8002:8000"
+    depends_on:
+      - postgres_staging
+      - redis_staging
+      - kafka_staging
+
+  frontend_staging:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://18.228.54.9:8002
+    container_name: pqrs_staging_frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://18.228.54.9:8002
+    ports:
+      - "3003:3000"
+    depends_on:
+      - backend_staging
+
+volumes:
+  pg_staging_data:
+  redis_staging_data:
+  minio_staging_data:
