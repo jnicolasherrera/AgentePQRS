@@ -75,6 +75,79 @@ docker exec pqrs_v2_db pg_dump -U pqrs_admin -d pqrs_v2 -F c -f /tmp/backup_$(da
 docker cp pqrs_v2_db:/tmp/backup_*.dump ~/backups/
 ```
 
+## Modo Multi-Agente — Obligatorio
+
+> **Esta directiva es de cumplimiento obligatorio en TODAS las tareas,
+> sin excepcion. Un solo agente secuencial esta prohibido para cualquier
+> tarea que tenga mas de un componente.**
+
+### Principio
+Claude Code SIEMPRE debe descomponer las tareas en agentes especializados
+paralelos o secuenciales segun el tipo de trabajo. Nunca ejecutar todo
+en un solo hilo de razonamiento si la tarea tiene partes independientes.
+
+### Cuando usar multiples agentes
+
+| Situacion | Estrategia |
+|-----------|-----------|
+| Tarea con backend + frontend | Agente DB, Agente Backend, Agente Frontend en paralelo |
+| Debug de un bug | Agente Diagnostico → Agente Fix → Agente Verificacion |
+| Feature nueva | Agente Diseno → Agente Implementacion → Agente Tests |
+| Migracion de DB | Agente Schema → Agente Data → Agente Validacion |
+| Deploy | Agente Build → Agente Deploy → Agente Smoke Test |
+| Cualquier tarea > 3 pasos | Siempre dividir en agentes especializados |
+
+### Estructura obligatoria de cada sesion
+
+Antes de ejecutar CUALQUIER tarea, Claude Code debe declarar explicitamente:
+
+```
+PLAN MULTI-AGENTE
+━━━━━━━━━━━━━━━━━━━━
+Agente 1 — [NOMBRE]: [responsabilidad]
+Agente 2 — [NOMBRE]: [responsabilidad]
+Agente 3 — [NOMBRE]: [responsabilidad]
+Modo: PARALELO | SECUENCIAL | MIXTO
+Dependencias: Agente 2 espera resultado de Agente 1 para [X]
+```
+
+### Roles de agentes disponibles en FlexPQR
+
+| Agente | Especialidad |
+|--------|-------------|
+| **DB Agent** | SQL, migraciones, RLS, backups, seeds |
+| **Backend Agent** | FastAPI, endpoints, servicios, workers |
+| **Frontend Agent** | Next.js, componentes, hooks, SSE |
+| **Infra Agent** | Docker, Nginx, SSH, AWS, variables de entorno |
+| **QA Agent** | Tests, verificacion, smoke tests post-deploy |
+| **Docs Agent** | Brain/, commits, documentacion, changelog |
+
+### Ejemplo correcto
+
+```
+PLAN MULTI-AGENTE — Hotfix reasignacion de casos
+━━━━━━━━━━━━━━━━━━━━
+Agente 1 — Backend Agent: Agregar asignado_a al PATCH /casos/{id}
+Agente 2 — Frontend Agent: Agregar dropdown de reasignacion al overlay
+Agente 3 — Infra Agent: Rebuild backend + frontend y verificar
+Agente 4 — QA Agent: Smoke test del endpoint y UI
+Modo: MIXTO (1+2 en paralelo, luego 3, luego 4)
+Dependencias: Agente 3 espera que 1 y 2 terminen
+```
+
+### Ejemplo incorrecto
+
+Ejecutar backend + frontend + deploy + tests en un solo bloque de codigo
+sin separar responsabilidades ni declarar el plan. Esto esta PROHIBIDO.
+
+### Beneficios
+
+- **Velocidad:** Partes independientes corren en paralelo
+- **Calidad:** Cada agente es experto en su dominio
+- **Trazabilidad:** El plan declarado queda en el log de la sesion
+- **Rollback:** Si un agente falla, los otros no se ven afectados
+
+
 ## Lecciones Aprendidas
 
 ### Frontend — Volumenes de desarrollo bloquean rebuild (27/03/2026)
