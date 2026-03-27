@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuthStore } from "@/store/authStore";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, ArrowLeft, Loader2, ShieldCheck } from "lucide-react";
@@ -14,6 +14,12 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   const login = useAuthStore((state) => state.login);
+  const clearAuth = useAuthStore((state) => state.clearAuth);
+
+  // Limpiar sesión vieja al llegar a /login para evitar ciclos de ReAuth
+  useEffect(() => {
+    clearAuth();
+  }, [clearAuth]);
 
   async function handleContinue(e: React.FormEvent) {
     e.preventDefault();

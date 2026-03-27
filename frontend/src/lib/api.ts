@@ -21,18 +21,24 @@ api.interceptors.request.use((config) => {
 });
 
 // Response interceptor: on 401, fire session-expired event (do NOT redirect)
+// Skip for /auth/ endpoints — those 401s are login failures, not expired sessions
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    if (error.response?.status === 401 && !error.config._retry) {
+    const isAuthEndpoint = error.config?.url?.includes('/auth/');
+    if (
+      error.response?.status === 401
+      && !error.config._retry
+      && !isAuthEndpoint
+      && typeof window !== 'undefined'
+      && !window.location.pathname.startsWith('/login')
+    ) {
       error.config._retry = true;
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('FLEXPQR_SESSION_EXPIRED', {
-            detail: { originalRequest: error.config },
-          })
-        );
-      }
+      window.dispatchEvent(
+        new CustomEvent('FLEXPQR_SESSION_EXPIRED', {
+          detail: { originalRequest: error.config },
+        })
+      );
     }
     return Promise.reject(error);
   }
