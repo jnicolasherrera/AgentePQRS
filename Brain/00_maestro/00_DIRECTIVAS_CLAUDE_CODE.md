@@ -46,6 +46,54 @@ tags:
 - `bot` -- Cuenta de servicio para workers automaticos
 
 
+## Deploy en Produccion (18.228.54.9)
+
+```bash
+# Conectar al servidor
+ssh -i ~/.ssh/flexpqr-prod.pem ubuntu@18.228.54.9
+cd ~/PQRS_V2
+
+# Pull de cambios
+git pull origin develop
+
+# Levantar con rebuild — backend y workers
+docker compose up -d --build backend_v2
+docker compose up -d --build master_worker_v2
+
+# FRONTEND — procedimiento especial obligatorio
+# docker compose up --build NO funciona para el frontend porque los volumenes
+# de desarrollo (bind mount ./frontend:/app + anonymous volume /app/.next)
+# sobrescriben el .next del Dockerfile.
+# SIEMPRE usar este procedimiento para deployar cambios de frontend:
+docker exec pqrs_v2_frontend sh -c 'cd /app && npm run build'
+docker compose restart frontend_v2
+# Verificar que levanto correctamente:
+docker logs pqrs_v2_frontend --tail=20
+
+# Backup de base de datos (antes de cualquier cambio en DB)
+docker exec pqrs_v2_db pg_dump -U pqrs_admin -d pqrs_v2 -F c -f /tmp/backup_$(date +%Y%m%d_%H%M).dump
+docker cp pqrs_v2_db:/tmp/backup_*.dump ~/backups/
+```
+
+## Lecciones Aprendidas
+
+### Frontend — Volumenes de desarrollo bloquean rebuild (27/03/2026)
+**Sintoma:** Cambios de codigo en el frontend no se reflejan en produccion
+despues de `docker compose up -d --build frontend_v2`.
+**Causa raiz:** El docker-compose.yml tiene bind mounts de desarrollo:
+- `./frontend:/app` — sobrescribe el /app del image con los archivos del host
+- `/app/.next` — volumen anonimo persiste el .next viejo entre rebuilds
+
+El build del Dockerfile genera el .next correcto, pero el volumen anonimo
+lo reemplaza al iniciar el contenedor.
+**Fix operativo:** Buildear dentro del contenedor corriendo:
+```bash
+docker exec pqrs_v2_frontend sh -c 'cd /app && npm run build'
+docker compose restart frontend_v2
+```
+**Fix definitivo pendiente:** Crear un docker-compose.prod.yml sin los volumenes
+de desarrollo y usar `docker compose -f docker-compose.prod.yml up -d --build`.
+
 ## Referencias
 
 - [[01_ARQUITECTURA_MAESTRA]]
