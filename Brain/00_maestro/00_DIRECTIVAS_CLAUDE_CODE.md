@@ -42,8 +42,12 @@ tags:
 - `admin` -- Administrador de un tenant especifico
 - `coordinador` -- Coordinador de equipo dentro del tenant
 - `analista` -- Abogado/analista que trabaja los casos
+- `abogado` -- Equivalente funcional de analista (usado por Abogados Recovery)
 - `auditor` -- Solo lectura para auditoria
 - `bot` -- Cuenta de servicio para workers automaticos
+
+**IMPORTANTE:** En el codigo, comparar SIEMPRE contra ambos roles: `analista` Y `abogado`.
+Ejemplo: `WHERE rol IN ('analista', 'abogado')` o `user?.rol === "analista" || user?.rol === "abogado"`.
 
 
 ## Deploy en Produccion (18.228.54.9)
@@ -178,6 +182,45 @@ Abogados firman casos pero ciudadanos no reciben respuesta.
 **Variables de entorno para SMTP fallback:**
   SMTP_FALLBACK_HOST, SMTP_FALLBACK_PORT, SMTP_FALLBACK_USER, SMTP_FALLBACK_PASS
 **Desbloqueo manual:** https://mail.zoho.com/UnblockMe
+
+### Auth — Ciclo infinito de sesion expirada (27/03/2026)
+**Sintoma:** Usuarios no pueden iniciar sesion. Quedan atrapados en el modal
+"Tu sesion ha expirado" y ni "Cerrar sesion" los saca.
+**Causa raiz (4 bugs encadenados):**
+1. El interceptor 401 de axios se disparaba en TODAS las rutas, incluyendo /login
+2. Un login fallido en /login abria el ReAuth modal encima del login real
+3. `clearAuth()` de zustand no limpiaba localStorage sincronicamente
+4. `router.push('/login')` no recargaba la pagina, dejando estado viejo en memoria
+**Fix implementado:**
+- Interceptor 401 excluye endpoints `/auth/` y la ruta `/login`
+- La pagina `/login` llama `clearAuth()` en useEffect al cargar
+- `clearAuth()` hace `localStorage.removeItem('pqrs-v2-auth')` explicito
+- Todos los redirects usan `window.location.href` en vez de `router.push`
+**Regla:** NUNCA usar `router.push('/login')` para cerrar sesion. SIEMPRE `window.location.href = '/login'`.
+
+### Cambio de password obligatorio (27/03/2026)
+**Feature:** Modal bloqueante `ChangePasswordModal` que aparece cuando
+`user.debe_cambiar_password === true` despues del login.
+**Backend:** `POST /api/v2/auth/change-password` con `{ new_password }` —
+actualiza hash y pone `debe_cambiar_password = FALSE`.
+**Frontend:** Componente en `frontend/src/components/ui/change-password-modal.tsx`,
+integrado en `page.tsx` del dashboard.
+**Uso admin:** Para resetear passwords de un tenant:
+```python
+# Desde pqrs_v2_backend container:
+UPDATE usuarios SET password_hash = '<bcrypt_hash>', debe_cambiar_password = TRUE
+WHERE cliente_id = '<tenant_uuid>' AND is_active = TRUE;
+```
+
+## Tenant Demo
+
+- **Tenant ID:** 11111111-1111-1111-1111-111111111111
+- **Admin:** demo@flexpqr.co / FlexDemo1
+- **Email ingesta:** democlasificador@gmail.com (IMAP polling cada 30s)
+- **Worker:** demo_worker_v2 — lee Gmail, clasifica, genera borrador IA, envia acuse
+- **Reset automatico:** Casos con mas de 30 min se eliminan automaticamente
+- **Seed datos:** `scripts/seed_demo_data.py` — 18 casos variados + 5 usuarios demo
+- **Ejecucion seed:** `docker cp scripts/seed_demo_data.py pqrs_v2_backend:/tmp/ && docker exec pqrs_v2_backend python3 /tmp/seed_demo_data.py`
 
 ## Referencias
 
