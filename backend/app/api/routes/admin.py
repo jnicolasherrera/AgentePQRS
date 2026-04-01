@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from app.core.db import get_db_connection
 from app.core.security import get_current_user, UserInToken, verify_password, get_password_hash
+from app.services.zoho_engine import ZohoServiceV2
 
 router = APIRouter()
 
@@ -59,11 +60,12 @@ async def get_team(
     current_user: UserInToken = Depends(get_current_user),
     conn = Depends(get_db_connection)
 ) -> List[Dict[str, Any]]:
-    if current_user.role not in ['admin', 'super_admin']:
-        raise HTTPException(status_code=403, detail="Solo administradores")
+    if current_user.role not in ['admin', 'super_admin', 'coordinador']:
+        raise HTTPException(status_code=403, detail="Acceso denegado")
     rows = await conn.fetch(
         """SELECT id, nombre, email, rol, is_active, created_at
-           FROM usuarios WHERE cliente_id = $1 AND rol = 'analista'
+           FROM usuarios WHERE cliente_id = $1 AND is_active = TRUE
+             AND rol IN ('analista', 'abogado', 'coordinador', 'admin')
            ORDER BY nombre ASC""",
         current_user.tenant_uuid
     )
@@ -239,6 +241,73 @@ async def marcar_feedback(
     return {"ok": True, "feedback_count": count}
 
 
+@router.delete("/casos/{caso_id}/no-pqrs")
+async def eliminar_caso_no_pqrs(
+    caso_id: str,
+    current_user: UserInToken = Depends(get_current_user),
+    conn = Depends(get_db_connection),
+) -> Dict[str, Any]:
+    if current_user.role not in ['admin', 'super_admin']:
+        raise HTTPException(status_code=403, detail="Solo administradores")
+
+    es_super = current_user.role == 'super_admin'
+    row = await conn.fetchrow(
+        "SELECT id, es_pqrs, cliente_id FROM pqrs_casos WHERE id = $1::uuid" +
+        ("" if es_super else " AND cliente_id = $2::uuid"),
+        *([uuid.UUID(caso_id)] if es_super else [uuid.UUID(caso_id), uuid.UUID(current_user.tenant_uuid)])
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
+    if row["es_pqrs"] is not False:
+        raise HTTPException(status_code=400, detail="Solo se pueden eliminar casos marcados como No PQRS")
+
+    await conn.execute("DELETE FROM pqrs_casos WHERE id = $1::uuid", uuid.UUID(caso_id))
+    return {"ok": True, "deleted": caso_id}
+
+
+class DeleteNoPqrsLoteRequest(BaseModel):
+    caso_ids: List[str]
+
+
+@router.delete("/casos/no-pqrs/lote")
+async def eliminar_no_pqrs_lote(
+    body: DeleteNoPqrsLoteRequest,
+    current_user: UserInToken = Depends(get_current_user),
+    conn = Depends(get_db_connection),
+) -> Dict[str, Any]:
+    if current_user.role not in ['admin', 'super_admin']:
+        raise HTTPException(status_code=403, detail="Solo administradores")
+    if not body.caso_ids:
+        raise HTTPException(status_code=400, detail="Debe enviar al menos un caso_id")
+
+    es_super = current_user.role == 'super_admin'
+    uuids = [uuid.UUID(cid) for cid in body.caso_ids]
+
+    tenant_filter = "" if es_super else " AND cliente_id = $2::uuid"
+    tenant_params = [] if es_super else [uuid.UUID(current_user.tenant_uuid)]
+
+    rows = await conn.fetch(
+        f"SELECT id, es_pqrs FROM pqrs_casos WHERE id = ANY($1::uuid[]){tenant_filter}",
+        uuids, *tenant_params
+    )
+
+    found_ids = {r["id"] for r in rows}
+    not_found = [str(uid) for uid in uuids if uid not in found_ids]
+    not_no_pqrs = [str(r["id"]) for r in rows if r["es_pqrs"] is not False]
+
+    if not_found:
+        raise HTTPException(status_code=404, detail=f"Casos no encontrados: {', '.join(not_found)}")
+    if not_no_pqrs:
+        raise HTTPException(status_code=400, detail=f"Casos no marcados como No PQRS: {', '.join(not_no_pqrs)}")
+
+    deleted = await conn.execute(
+        f"DELETE FROM pqrs_casos WHERE id = ANY($1::uuid[]){tenant_filter}",
+        uuids, *tenant_params
+    )
+
+    return {"ok": True, "deleted_count": len(uuids), "deleted_ids": body.caso_ids}
+
+
 @router.get("/clientes")
 async def listar_clientes(
     current_user: UserInToken = Depends(get_current_user),
@@ -269,3 +338,36 @@ async def listar_clientes(
             "is_active": r["is_active"]
         } for r in rows
     ]
+
+
+@router.get("/zoho/health")
+async def zoho_health_check(
+    current_user: UserInToken = Depends(get_current_user),
+    conn=Depends(get_db_connection),
+):
+    if current_user.role not in ("admin", "super_admin", "coordinador"):
+        raise HTTPException(status_code=403, detail="Sin permisos")
+    buzon = await conn.fetchrow(
+        """SELECT email_buzon, azure_client_id, azure_client_secret,
+                  zoho_refresh_token, zoho_account_id
+           FROM config_buzones
+           WHERE cliente_id=$1 AND proveedor='ZOHO' AND is_active=TRUE LIMIT 1""",
+        uuid.UUID(current_user.tenant_uuid),
+    )
+    if not buzon:
+        return {"status": "sin_configuracion", "puede_enviar": False,
+                "mensaje": "No hay buzon Zoho configurado para este tenant"}
+    try:
+        zoho = ZohoServiceV2(
+            buzon["azure_client_id"], buzon["azure_client_secret"],
+            buzon["zoho_refresh_token"], buzon["zoho_account_id"],
+        )
+        token = zoho._get_access_token()
+        if token:
+            return {"status": "operativo", "email_buzon": buzon["email_buzon"],
+                    "puede_enviar": True, "mensaje": "Zoho responde correctamente"}
+        return {"status": "error_auth", "email_buzon": buzon["email_buzon"],
+                "puede_enviar": False, "mensaje": "No se pudo obtener access token"}
+    except Exception as e:
+        return {"status": "error", "email_buzon": buzon["email_buzon"],
+                "puede_enviar": False, "mensaje": str(e)}
