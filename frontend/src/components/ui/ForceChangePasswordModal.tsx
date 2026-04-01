@@ -36,10 +36,11 @@ export function ForceChangePasswordModal() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div
-        className="w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl"
+        className="relative w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl"
         style={{ border: '2px solid #035aa7' }}
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="mb-6 text-center">
