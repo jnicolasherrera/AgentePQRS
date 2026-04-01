@@ -93,7 +93,8 @@ export function ForceChangePasswordModal() {
                 placeholder="Mínimo 8 caracteres"
                 required
                 autoFocus
-                className="w-full rounded-lg border border-gray-300 px-4 py-2.5 pr-11 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 pr-11 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                style={{ color: '#111827' }}
               />
               <button
                 type="button"
@@ -131,8 +132,8 @@ export function ForceChangePasswordModal() {
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Repite tu nueva contraseña"
               required
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-              style={{ borderColor: confirmPassword && !passwordsMatch ? '#ef4444' : undefined }}
+              className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+              style={{ color: '#111827', borderColor: confirmPassword && !passwordsMatch ? '#ef4444' : undefined }}
             />
             {confirmPassword && !passwordsMatch && (
               <p className="mt-1 text-xs text-red-600">Las contraseñas no coinciden</p>
