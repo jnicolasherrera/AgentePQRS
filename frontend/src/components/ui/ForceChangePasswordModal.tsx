@@ -41,8 +41,7 @@ export function ForceChangePasswordModal() {
   return createPortal(
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onMouseDown={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) e.stopPropagation(); }}
     >
       <div
         className="relative w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl"
@@ -73,6 +72,8 @@ export function ForceChangePasswordModal() {
             <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
             <input
               type="email"
+              name="username"
+              autoComplete="username"
               value={user?.email ?? ''}
               readOnly
               className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-500"
@@ -85,6 +86,8 @@ export function ForceChangePasswordModal() {
             <div className="relative">
               <input
                 type={showPassword ? 'text' : 'password'}
+                name="new-password"
+                autoComplete="new-password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="Mínimo 8 caracteres"
@@ -122,6 +125,8 @@ export function ForceChangePasswordModal() {
             <label className="mb-1 block text-sm font-medium text-gray-700">Confirmar contraseña</label>
             <input
               type={showPassword ? 'text' : 'password'}
+              name="new-password-confirm"
+              autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Repite tu nueva contraseña"
