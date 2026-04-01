@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 
@@ -35,12 +36,17 @@ export function ForceChangePasswordModal() {
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
       <div
         className="relative w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl"
         style={{ border: '2px solid #035aa7' }}
-        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="mb-6 text-center">
@@ -144,6 +150,7 @@ export function ForceChangePasswordModal() {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
