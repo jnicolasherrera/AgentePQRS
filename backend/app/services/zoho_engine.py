@@ -38,24 +38,35 @@ class ZohoServiceV2:
     ZOHO_ACCOUNTS_URL = "https://accounts.zoho.com"
     ZOHO_MAIL_API = "https://mail.zoho.com/api"
 
-    # Backoff compartido entre instancias, keyed by refresh_token
-    _backoff_registry: dict = {}
+    # Class-level registries shared across instances, keyed by refresh_token
+    _backoff_registry: dict = {}       # {refresh_token: backoff_until}
+    _token_cache: dict = {}            # {refresh_token: (access_token, expiry)}
+    _consecutive_failures: dict = {}   # {refresh_token: int}
+
+    ZOHO_MAX_RETRIES = int(os.environ.get("ZOHO_MAX_RETRIES", "4"))
+    ZOHO_BACKOFF_BASE_SECONDS = int(os.environ.get("ZOHO_BACKOFF_BASE_SECONDS", "90"))
 
     def __init__(self, client_id, client_secret, refresh_token, account_id=None):
         self.client_id = client_id
         self.client_secret = client_secret
         self.refresh_token = refresh_token
         self.account_id = account_id
-        self._access_token = None
-        self._token_expiry = None
 
     def _get_access_token(self):
         now = datetime.utcnow()
+        # Check backoff
         backoff_until = ZohoServiceV2._backoff_registry.get(self.refresh_token)
         if backoff_until and now < backoff_until:
-            raise Exception("Zoho token rate-limited, esperando backoff")
-        if self._access_token and self._token_expiry and now < self._token_expiry:
-            return self._access_token
+            remaining = int((backoff_until - now).total_seconds())
+            failures = ZohoServiceV2._consecutive_failures.get(self.refresh_token, 0)
+            raise Exception(f"Zoho token rate-limited, intento {failures}/{self.ZOHO_MAX_RETRIES}, retry en {remaining}s")
+        # Check class-level token cache (survives instance recreation)
+        cached = ZohoServiceV2._token_cache.get(self.refresh_token)
+        if cached:
+            token, expiry = cached
+            if now < expiry:
+                return token
+        # Refresh token
         url = f"{self.ZOHO_ACCOUNTS_URL}/oauth/v2/token"
         data = {
             "refresh_token": self.refresh_token,
@@ -66,14 +77,32 @@ class ZohoServiceV2:
         resp = requests.post(url, data=data)
         if resp.status_code != 200:
             if "too many requests" in resp.text.lower():
-                ZohoServiceV2._backoff_registry[self.refresh_token] = now + timedelta(seconds=90)
-                logger.warning("Zoho rate-limit detectado, backoff 90s activo")
+                failures = ZohoServiceV2._consecutive_failures.get(self.refresh_token, 0) + 1
+                ZohoServiceV2._consecutive_failures[self.refresh_token] = failures
+                # Exponential backoff: 90s, 180s, 600s, 1800s
+                backoff_map = {1: 1, 2: 2, 3: 6.67, 4: 20}
+                multiplier = backoff_map.get(failures, 20)
+                wait_seconds = int(self.ZOHO_BACKOFF_BASE_SECONDS * multiplier)
+                ZohoServiceV2._backoff_registry[self.refresh_token] = now + timedelta(seconds=wait_seconds)
+                if failures >= self.ZOHO_MAX_RETRIES:
+                    logger.critical(
+                        f"Zoho rate-limit CRITICO: {failures} fallos consecutivos, "
+                        f"backoff {wait_seconds}s. Buzón posiblemente inoperante."
+                    )
+                else:
+                    logger.warning(
+                        f"Zoho rate-limit detectado, intento {failures}/{self.ZOHO_MAX_RETRIES}, "
+                        f"backoff {wait_seconds}s"
+                    )
             raise Exception(f"Error Zoho Token: {resp.text}")
+        # Success — reset failure counter and cache token at class level
         ZohoServiceV2._backoff_registry.pop(self.refresh_token, None)
+        ZohoServiceV2._consecutive_failures.pop(self.refresh_token, None)
         res = resp.json()
-        self._access_token = res["access_token"]
-        self._token_expiry = now + timedelta(seconds=res.get("expires_in", 3600) - 60)
-        return self._access_token
+        access_token = res["access_token"]
+        expiry = now + timedelta(seconds=res.get("expires_in", 3600) - 60)
+        ZohoServiceV2._token_cache[self.refresh_token] = (access_token, expiry)
+        return access_token
 
     def _make_request(self, endpoint, method="GET", params=None, json_data=None):
         token = self._get_access_token()
