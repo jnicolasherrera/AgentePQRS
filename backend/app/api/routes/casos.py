@@ -42,32 +42,34 @@ def _firma_html() -> str:
         return ""
 
 
-def _send_via_gmail(to_email: str, subject: str, body: str) -> bool:
-    """Fallback SMTP para tenants sin Zoho configurado (demo)."""
-    gmail_user = os.environ.get("DEMO_GMAIL_USER", "")
-    gmail_pass = os.environ.get("DEMO_GMAIL_PASSWORD", "")
-    if not gmail_user or not gmail_pass:
+def _send_via_smtp_fallback(to_email: str, subject: str, body: str) -> bool:
+    """Fallback SMTP cuando Zoho falla. Usa SMTP_FALLBACK_* env vars, cae a Gmail demo si no hay."""
+    smtp_host = os.environ.get("SMTP_FALLBACK_HOST", "smtp.gmail.com")
+    smtp_port = int(os.environ.get("SMTP_FALLBACK_PORT", "465"))
+    smtp_user = os.environ.get("SMTP_FALLBACK_USER", os.environ.get("DEMO_GMAIL_USER", ""))
+    smtp_pass = os.environ.get("SMTP_FALLBACK_PASS", os.environ.get("DEMO_GMAIL_PASSWORD", ""))
+    if not smtp_user or not smtp_pass:
+        logger.error("SMTP fallback no configurado — envío perdido para: " + to_email)
         return False
     try:
         firma = _firma_html()
         html_body = (
             "<div style='font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6'>"
-            + _md_to_html(body)
-            + firma
-            + "</div>"
+            + _md_to_html(body) + firma + "</div>"
         )
         msg = MIMEMultipart("alternative")
-        msg["From"]    = f"FlexPQR <{gmail_user}>"
-        msg["To"]      = to_email
+        msg["From"] = f"FlexPQR <{smtp_user}>"
+        msg["To"] = to_email
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "plain", "utf-8"))
         msg.attach(MIMEText(html_body, "html", "utf-8"))
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(gmail_user, gmail_pass)
-            server.sendmail(gmail_user, to_email, msg.as_string())
+        with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, to_email, msg.as_string())
+        logger.warning(f"Email enviado via SMTP fallback → {to_email}")
         return True
     except Exception as e:
-        logging.getLogger("CASOS_ROUTER").error(f"Gmail SMTP fallback error: {e}")
+        logger.error(f"SMTP fallback también falló: {e}")
         return False
 
 logger = logging.getLogger("CASOS_ROUTER")
@@ -218,10 +220,13 @@ async def get_caso_detalle(
     conn=Depends(get_db_connection),
 ) -> Dict[str, Any]:
     caso = await conn.fetchrow(
-        """SELECT id, cliente_id, email_origen, asunto, cuerpo, estado, nivel_prioridad,
-                  fecha_recibido, tipo_caso, fecha_vencimiento,
-                  borrador_respuesta, borrador_estado, problematica_detectada
-           FROM pqrs_casos WHERE id = $1""",
+        """SELECT c.id, c.cliente_id, c.email_origen, c.asunto, c.cuerpo, c.estado, c.nivel_prioridad,
+                  c.fecha_recibido, c.tipo_caso, c.fecha_vencimiento,
+                  c.borrador_respuesta, c.borrador_estado, c.problematica_detectada,
+                  c.asignado_a, u.nombre AS asignado_nombre
+           FROM pqrs_casos c
+           LEFT JOIN usuarios u ON u.id = c.asignado_a
+           WHERE c.id = $1""",
         uuid.UUID(caso_id),
     )
     if not caso:
@@ -260,6 +265,8 @@ async def get_caso_detalle(
         "borrador_respuesta": caso["borrador_respuesta"],
         "borrador_estado": caso["borrador_estado"],
         "problematica_detectada": caso["problematica_detectada"],
+        "asignado_a": str(caso["asignado_a"]) if caso["asignado_a"] else None,
+        "asignado_nombre": caso["asignado_nombre"],
         "comentarios": comentarios,
         "archivos": [
             {
@@ -313,13 +320,34 @@ async def update_caso(
         updates.append(f"estado = ${len(values)+1}"); values.append(payload["estado"])
     if "prioridad" in payload:
         updates.append(f"nivel_prioridad = ${len(values)+1}"); values.append(payload["prioridad"])
+    if "asignado_a" in payload:
+        usuario_destino = await conn.fetchrow(
+            """SELECT id FROM usuarios
+               WHERE id = $1 AND cliente_id = $2 AND is_active = TRUE""",
+            uuid.UUID(payload["asignado_a"]),
+            uuid.UUID(current_user.tenant_uuid),
+        )
+        if not usuario_destino:
+            raise HTTPException(status_code=400, detail="Usuario destino no válido")
+        updates.append(f"asignado_a = ${len(values)+1}")
+        values.append(uuid.UUID(payload["asignado_a"]))
     if not updates:
         return {"status": "ok", "message": "No changes"}
+    updates.append(f"updated_at = NOW()")
     values.append(uuid.UUID(caso_id))
     updated_id = await conn.fetchval(
         f"UPDATE pqrs_casos SET {', '.join(updates)} WHERE id = ${len(values)} RETURNING id", *values)
     if not updated_id:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
+    if "asignado_a" in payload:
+        await conn.execute(
+            """INSERT INTO audit_log_respuestas
+               (caso_id, usuario_id, accion, metadata)
+               VALUES ($1, $2, 'REASIGNADO', $3)""",
+            uuid.UUID(caso_id),
+            uuid.UUID(current_user.usuario_id),
+            json.dumps({"asignado_a": payload["asignado_a"]}),
+        )
     return {"status": "ok", "id": str(updated_id)}
 
 
@@ -489,11 +517,22 @@ async def aprobar_lote(
                     })
 
             subject = f"Re: {caso['asunto']}"
+            ok = False
+            metodo_envio = "ninguno"
             if zoho:
-                ok = zoho.send_reply(caso["email_origen"], subject, caso["borrador_respuesta"],
-                                     buzon["email_buzon"], adjuntos=adjuntos_data or None)
-            else:
-                ok = _send_via_gmail(caso["email_origen"], subject, caso["borrador_respuesta"])
+                try:
+                    ok = zoho.send_reply(caso["email_origen"], subject, caso["borrador_respuesta"],
+                                         buzon["email_buzon"], adjuntos=adjuntos_data or None)
+                    if ok:
+                        metodo_envio = "zoho"
+                    else:
+                        logger.warning(f"Zoho retornó False para caso {cid} — intentando fallback SMTP")
+                except Exception as zoho_err:
+                    logger.error(f"Zoho excepción caso {cid}: {zoho_err} — intentando fallback SMTP")
+            if not ok:
+                ok = _send_via_smtp_fallback(caso["email_origen"], subject, caso["borrador_respuesta"])
+                if ok:
+                    metodo_envio = "smtp_fallback"
             if ok:
                 await conn.execute(
                     """UPDATE pqrs_casos SET borrador_estado='ENVIADO', estado='CERRADO',
@@ -506,7 +545,7 @@ async def aprobar_lote(
                        VALUES ($1,$2,'ENVIADO_LOTE',$3,$4,$5)""",
                     caso["id"], uuid.UUID(current_user.usuario_id), lote_id, ip,
                     json.dumps({"email_destino": caso["email_origen"], "asunto": subject,
-                                "lote_size": len(body.caso_ids)}),
+                                "lote_size": len(body.caso_ids), "metodo_envio": metodo_envio}),
                 )
                 enviados.append(cid)
             else:

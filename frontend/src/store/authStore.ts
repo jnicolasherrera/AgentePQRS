@@ -30,7 +30,10 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       isAuthenticated: false,
       setAuth: (token, user) => set({ token, user, isAuthenticated: true }),
-      clearAuth: () => set({ token: null, user: null, isAuthenticated: false }),
+      clearAuth: () => {
+        set({ token: null, user: null, isAuthenticated: false });
+        try { localStorage.removeItem("pqrs-v2-auth"); } catch {}
+      },
       login: async (email: string, password: string) => {
         try {
           const response = await api.post("/auth/login", { email, password });

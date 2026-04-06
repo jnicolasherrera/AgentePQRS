@@ -2,7 +2,6 @@
 
 import React, { useState } from 'react';
 import axios from 'axios';
-import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/authStore';
 
 interface ReAuthModalProps {
@@ -11,7 +10,6 @@ interface ReAuthModalProps {
 }
 
 export function ReAuthModal({ originalRequest, onSuccess }: ReAuthModalProps) {
-  const router = useRouter();
   const { user, setAuth, clearAuth } = useAuthStore();
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -44,7 +42,8 @@ export function ReAuthModal({ originalRequest, onSuccess }: ReAuthModalProps) {
       setAttemptsLeft(remaining);
       if (remaining <= 0) {
         clearAuth();
-        router.push('/login');
+        window.location.href = '/login';
+        return;
       } else {
         setError(`Contraseña incorrecta. ${remaining} ${remaining === 1 ? 'intento restante' : 'intentos restantes'}.`);
       }
@@ -55,7 +54,7 @@ export function ReAuthModal({ originalRequest, onSuccess }: ReAuthModalProps) {
 
   const handleLogout = () => {
     clearAuth();
-    router.push('/login');
+    window.location.href = '/login';
   };
 
   return (
