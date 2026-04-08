@@ -118,24 +118,15 @@ async def historial_enviados(
     current_user: UserInToken = Depends(get_current_user),
     conn=Depends(get_db_connection),
 ) -> List[Dict[str, Any]]:
-    if current_user.role not in ["admin", "super_admin", "analista"]:
+    ROLES_PERMITIDOS = {"admin", "super_admin", "analista", "coordinador", "auditor", "abogado"}
+    ROLES_VEN_TODO = {"admin", "coordinador", "super_admin", "auditor"}
+
+    if current_user.role not in ROLES_PERMITIDOS:
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     es_super = current_user.role == "super_admin"
 
-    if current_user.role == "analista":
-        rows = await conn.fetch(
-            """SELECT a.id, a.caso_id, a.lote_id, a.created_at,
-                      u.nombre AS abogado_nombre,
-                      c.email_origen, c.asunto, c.tipo_caso, c.nivel_prioridad
-               FROM audit_log_respuestas a
-               JOIN usuarios u ON u.id = a.usuario_id
-               JOIN pqrs_casos c ON c.id = a.caso_id
-               WHERE a.accion = 'ENVIADO_LOTE' AND a.usuario_id = $1
-               ORDER BY a.created_at DESC LIMIT 500""",
-            uuid.UUID(current_user.usuario_id),
-        )
-    elif es_super and not cliente_id:
+    if es_super and not cliente_id:
         rows = await conn.fetch(
             """SELECT a.id, a.caso_id, a.lote_id, a.created_at,
                       u.nombre AS abogado_nombre,
@@ -148,17 +139,32 @@ async def historial_enviados(
         )
     else:
         tid = uuid.UUID(cliente_id) if (es_super and cliente_id) else uuid.UUID(current_user.tenant_uuid)
-        rows = await conn.fetch(
-            """SELECT a.id, a.caso_id, a.lote_id, a.created_at,
-                      u.nombre AS abogado_nombre,
-                      c.email_origen, c.asunto, c.tipo_caso, c.nivel_prioridad
-               FROM audit_log_respuestas a
-               JOIN usuarios u ON u.id = a.usuario_id
-               JOIN pqrs_casos c ON c.id = a.caso_id
-               WHERE a.accion = 'ENVIADO_LOTE' AND c.cliente_id = $1
-               ORDER BY a.created_at DESC LIMIT 500""",
-            tid,
-        )
+        if current_user.role in ROLES_VEN_TODO:
+            rows = await conn.fetch(
+                """SELECT a.id, a.caso_id, a.lote_id, a.created_at,
+                          u.nombre AS abogado_nombre,
+                          c.email_origen, c.asunto, c.tipo_caso, c.nivel_prioridad
+                   FROM audit_log_respuestas a
+                   JOIN usuarios u ON u.id = a.usuario_id
+                   JOIN pqrs_casos c ON c.id = a.caso_id
+                   WHERE a.accion = 'ENVIADO_LOTE' AND c.cliente_id = $1
+                   ORDER BY a.created_at DESC LIMIT 500""",
+                tid,
+            )
+        else:
+            # analista / abogado: solo sus propios envíos
+            rows = await conn.fetch(
+                """SELECT a.id, a.caso_id, a.lote_id, a.created_at,
+                          u.nombre AS abogado_nombre,
+                          c.email_origen, c.asunto, c.tipo_caso, c.nivel_prioridad
+                   FROM audit_log_respuestas a
+                   JOIN usuarios u ON u.id = a.usuario_id
+                   JOIN pqrs_casos c ON c.id = a.caso_id
+                   WHERE a.accion = 'ENVIADO_LOTE' AND c.cliente_id = $1
+                         AND a.usuario_id = $2
+                   ORDER BY a.created_at DESC LIMIT 500""",
+                tid, uuid.UUID(current_user.usuario_id),
+            )
     return [
         {
             "id": str(r["id"]),

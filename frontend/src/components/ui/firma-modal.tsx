@@ -19,6 +19,7 @@ export function FirmaModal({ casoIds, totalCasos, onClose, onEnviado }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [resultado, setResultado] = useState<{ enviados: number; errores: any[] } | null>(null);
+  const [notifEnvio, setNotifEnvio] = useState<{tipo: 'exito' | 'error'; mensaje: string} | null>(null);
 
   const confirmar = async () => {
     if (!password) { setError("Ingrese su contraseña"); return; }
@@ -30,9 +31,13 @@ export function FirmaModal({ casoIds, totalCasos, onClose, onEnviado }: Props) {
         { caso_ids: casoIds, password },
       );
       setResultado({ enviados: res.data.enviados, errores: res.data.errores });
+      setNotifEnvio({ tipo: 'exito', mensaje: `${res.data.enviados} respuesta(s) enviada(s) correctamente` });
+      setTimeout(() => setNotifEnvio(null), 6000);
     } catch (e: any) {
       const msg = e?.response?.data?.detail || "Error inesperado";
       setError(msg === "Contraseña incorrecta" ? "Contraseña incorrecta. Intente nuevamente." : msg);
+      setNotifEnvio({ tipo: 'error', mensaje: typeof msg === 'string' ? msg : 'Error al enviar respuestas' });
+      setTimeout(() => setNotifEnvio(null), 6000);
     } finally {
       setLoading(false);
     }
@@ -44,6 +49,7 @@ export function FirmaModal({ casoIds, totalCasos, onClose, onEnviado }: Props) {
   };
 
   return (
+    <>
     <AnimatePresence>
       <div className="fixed inset-0 z-[60] agente items-center justify-center p-4">
         <motion.div
@@ -179,5 +185,13 @@ export function FirmaModal({ casoIds, totalCasos, onClose, onEnviado }: Props) {
         </motion.div>
       </div>
     </AnimatePresence>
+
+      {notifEnvio && (
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-3 rounded-xl text-sm font-medium shadow-lg ${notifEnvio.tipo === 'exito' ? 'bg-emerald-500/90' : 'bg-red-500/90'} text-white`}>
+          <span>{notifEnvio.mensaje}</span>
+          <button onClick={() => setNotifEnvio(null)} className="ml-2 opacity-60 hover:opacity-100">x</button>
+        </div>
+      )}
+    </>
   );
 }

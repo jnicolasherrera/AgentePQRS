@@ -112,8 +112,9 @@ export function EnviadosTab({ selectedClienteId }: { selectedClienteId?: string 
 
       {filtrados.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-          <Send className="w-12 h-12 mb-3 opacity-30" />
-          <p className="font-medium">No hay respuestas enviadas aún</p>
+          <Send className="w-12 h-12 mb-4 opacity-30" />
+          <p className="font-medium text-slate-300">No has enviado respuestas aun</p>
+          <p className="text-sm mt-1 text-slate-500">Las respuestas que apruebes apareceran aqui</p>
         </div>
       ) : (
         <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
