@@ -261,7 +261,12 @@ async def eliminar_caso_no_pqrs(
     if row["es_pqrs"] is not False:
         raise HTTPException(status_code=400, detail="Solo se pueden eliminar casos marcados como No PQRS")
 
-    await conn.execute("DELETE FROM pqrs_casos WHERE id = $1::uuid", uuid.UUID(caso_id))
+    caso_uuid = uuid.UUID(caso_id)
+    await conn.execute("DELETE FROM pqrs_adjuntos WHERE caso_id = $1::uuid", caso_uuid)
+    await conn.execute("DELETE FROM pqrs_comentarios WHERE caso_id = $1::uuid", caso_uuid)
+    await conn.execute("DELETE FROM audit_log_respuestas WHERE caso_id = $1::uuid", caso_uuid)
+    await conn.execute("DELETE FROM pqrs_clasificacion_feedback WHERE caso_id = $1::uuid", caso_uuid)
+    await conn.execute("DELETE FROM pqrs_casos WHERE id = $1::uuid", caso_uuid)
     return {"ok": True, "deleted": caso_id}
 
 
@@ -300,7 +305,11 @@ async def eliminar_no_pqrs_lote(
     if not_no_pqrs:
         raise HTTPException(status_code=400, detail=f"Casos no marcados como No PQRS: {', '.join(not_no_pqrs)}")
 
-    deleted = await conn.execute(
+    await conn.execute(f"DELETE FROM pqrs_adjuntos WHERE caso_id = ANY($1::uuid[])", uuids)
+    await conn.execute(f"DELETE FROM pqrs_comentarios WHERE caso_id = ANY($1::uuid[])", uuids)
+    await conn.execute(f"DELETE FROM audit_log_respuestas WHERE caso_id = ANY($1::uuid[])", uuids)
+    await conn.execute(f"DELETE FROM pqrs_clasificacion_feedback WHERE caso_id = ANY($1::uuid[])", uuids)
+    await conn.execute(
         f"DELETE FROM pqrs_casos WHERE id = ANY($1::uuid[]){tenant_filter}",
         uuids, *tenant_params
     )
@@ -340,6 +349,10 @@ async def eliminar_casos_lote(
     if not_found:
         raise HTTPException(status_code=404, detail=f"Casos no encontrados: {', '.join(not_found)}")
 
+    await conn.execute("DELETE FROM pqrs_adjuntos WHERE caso_id = ANY($1::uuid[])", uuids)
+    await conn.execute("DELETE FROM pqrs_comentarios WHERE caso_id = ANY($1::uuid[])", uuids)
+    await conn.execute("DELETE FROM audit_log_respuestas WHERE caso_id = ANY($1::uuid[])", uuids)
+    await conn.execute("DELETE FROM pqrs_clasificacion_feedback WHERE caso_id = ANY($1::uuid[])", uuids)
     await conn.execute(
         f"DELETE FROM pqrs_casos WHERE id = ANY($1::uuid[]){tenant_filter}",
         uuids, *tenant_params
