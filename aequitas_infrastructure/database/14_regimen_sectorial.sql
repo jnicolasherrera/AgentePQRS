@@ -1,0 +1,138 @@
+-- ═══════════════════════════════════════════════════════════════
+-- Migración 14: Régimen Sectorial por Tenant
+-- Normativa: SFC Circular Básica Jurídica — QUEJA/RECLAMO = 8 días
+-- ═══════════════════════════════════════════════════════════════
+
+-- 1. Columna regimen_sla en clientes_tenant
+ALTER TABLE clientes_tenant
+  ADD COLUMN IF NOT EXISTS regimen_sla VARCHAR(50)
+    NOT NULL DEFAULT 'GENERAL'
+    CHECK (regimen_sla IN (
+      'GENERAL', 'FINANCIERO', 'SALUD', 'SERVICIOS_PUBLICOS', 'TELECOMUNICACIONES'
+    ));
+
+COMMENT ON COLUMN clientes_tenant.regimen_sla IS
+  'Régimen regulatorio del tenant. FINANCIERO: SFC CBJ — QUEJA/RECLAMO = 8 días hábiles.';
+
+-- 2. Tabla maestra de plazos por régimen y tipo de caso
+CREATE TABLE IF NOT EXISTS sla_regimen_config (
+  id           SERIAL PRIMARY KEY,
+  regimen      VARCHAR(50) NOT NULL,
+  tipo_caso    VARCHAR(50) NOT NULL,
+  dias_habiles INTEGER NOT NULL,
+  norma        VARCHAR(200) NOT NULL,
+  descripcion  TEXT,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(regimen, tipo_caso)
+);
+
+COMMENT ON TABLE sla_regimen_config IS
+  'Tabla maestra de plazos SLA por régimen sectorial y tipo de caso.';
+
+-- 3. Plazos GENERAL (Ley 1755/2015)
+INSERT INTO sla_regimen_config (regimen, tipo_caso, dias_habiles, norma, descripcion) VALUES
+  ('GENERAL', 'TUTELA',       2,  'Decreto 2591/1991 Art. 16',    '48 horas hábiles'),
+  ('GENERAL', 'PETICION',     15, 'Ley 1755/2015 Art. 14',        'Derecho de petición general'),
+  ('GENERAL', 'QUEJA',        15, 'Ley 1755/2015 Art. 14',        'Queja general'),
+  ('GENERAL', 'RECLAMO',      15, 'Ley 1755/2015 Art. 14',        'Reclamo general'),
+  ('GENERAL', 'SOLICITUD',    10, 'Ley 1755/2015 Art. 14',        'Solicitud de información'),
+  ('GENERAL', 'CONSULTA',     30, 'Ley 1755/2015 Art. 14',        'Consulta a autoridades'),
+  ('GENERAL', 'FELICITACION', 5,  'Buena práctica administrativa', 'Felicitación'),
+  ('GENERAL', 'SUGERENCIA',   15, 'Ley 1755/2015 Art. 14',        'Sugerencia')
+ON CONFLICT (regimen, tipo_caso) DO NOTHING;
+
+-- 4. Plazos FINANCIERO (SFC Circular Básica Jurídica)
+INSERT INTO sla_regimen_config (regimen, tipo_caso, dias_habiles, norma, descripcion) VALUES
+  ('FINANCIERO', 'TUTELA',       2,  'Decreto 2591/1991 Art. 16',           'Igual en todos los sectores'),
+  ('FINANCIERO', 'PETICION',     15, 'Ley 1755/2015 Art. 14',               'Derecho de petición general'),
+  ('FINANCIERO', 'QUEJA',        8,  'SFC Circular Básica Jurídica Cap. II', 'Régimen especial consumidor financiero'),
+  ('FINANCIERO', 'RECLAMO',      8,  'SFC Circular Básica Jurídica Cap. II', 'Régimen especial consumidor financiero'),
+  ('FINANCIERO', 'SOLICITUD',    10, 'Ley 1755/2015 Art. 14',               'Solicitud de información'),
+  ('FINANCIERO', 'CONSULTA',     30, 'Ley 1755/2015 Art. 14',               'Consulta'),
+  ('FINANCIERO', 'FELICITACION', 5,  'Buena práctica',                       'Felicitación'),
+  ('FINANCIERO', 'SUGERENCIA',   15, 'Ley 1755/2015 Art. 14',               'Sugerencia')
+ON CONFLICT (regimen, tipo_caso) DO NOTHING;
+
+-- 5. Plazos SALUD (Ley 1438/2011)
+INSERT INTO sla_regimen_config (regimen, tipo_caso, dias_habiles, norma, descripcion) VALUES
+  ('SALUD', 'TUTELA',       2,  'Decreto 2591/1991',  'Urgencia constitucional'),
+  ('SALUD', 'PETICION',     15, 'Ley 1755/2015',      'Petición general'),
+  ('SALUD', 'QUEJA',        15, 'Ley 1438/2011',      'Queja en salud'),
+  ('SALUD', 'RECLAMO',      15, 'Ley 1438/2011',      'Reclamo en salud'),
+  ('SALUD', 'SOLICITUD',    10, 'Ley 1755/2015',      'Solicitud información'),
+  ('SALUD', 'CONSULTA',     30, 'Ley 1755/2015',      'Consulta'),
+  ('SALUD', 'FELICITACION', 5,  'Buena práctica',     'Felicitación'),
+  ('SALUD', 'SUGERENCIA',   15, 'Ley 1755/2015',      'Sugerencia')
+ON CONFLICT (regimen, tipo_caso) DO NOTHING;
+
+-- 6. Función calcular_fecha_vencimiento actualizada (lee régimen del tenant)
+CREATE OR REPLACE FUNCTION calcular_fecha_vencimiento(
+  fecha_inicio TIMESTAMPTZ,
+  tenant_id    UUID,
+  p_tipo_caso  VARCHAR
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+  v_dias_habiles  INTEGER;
+  v_regimen       VARCHAR(50);
+  v_fecha         DATE;
+  v_contador      INTEGER := 0;
+BEGIN
+  SELECT COALESCE(regimen_sla, 'GENERAL')
+    INTO v_regimen
+    FROM clientes_tenant WHERE id = tenant_id;
+  IF NOT FOUND THEN v_regimen := 'GENERAL'; END IF;
+
+  SELECT dias_habiles INTO v_dias_habiles
+    FROM sla_regimen_config
+   WHERE regimen = v_regimen AND tipo_caso = UPPER(p_tipo_caso);
+
+  IF NOT FOUND THEN
+    SELECT dias_habiles INTO v_dias_habiles
+      FROM sla_regimen_config
+     WHERE regimen = 'GENERAL' AND tipo_caso = UPPER(p_tipo_caso);
+  END IF;
+
+  IF NOT FOUND THEN v_dias_habiles := 15; END IF;
+
+  v_fecha := fecha_inicio::DATE;
+  WHILE v_contador < v_dias_habiles LOOP
+    v_fecha := v_fecha + INTERVAL '1 day';
+    IF EXTRACT(DOW FROM v_fecha) NOT IN (0, 6)
+       AND NOT EXISTS (
+         SELECT 1 FROM festivos_colombia WHERE fecha = v_fecha
+       )
+    THEN
+      v_contador := v_contador + 1;
+    END IF;
+  END LOOP;
+
+  RETURN (v_fecha + TIME '23:59:59')::TIMESTAMPTZ;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- 7. Actualizar trigger para pasar tenant_id
+CREATE OR REPLACE FUNCTION fn_set_fecha_vencimiento()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.tipo_caso IS NOT NULL AND NEW.fecha_recibido IS NOT NULL THEN
+    NEW.fecha_vencimiento := calcular_fecha_vencimiento(
+      NEW.fecha_recibido,
+      NEW.cliente_id,
+      NEW.tipo_caso
+    );
+    NEW.semaforo_sla := 'VERDE';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS tg_set_fecha_vencimiento ON pqrs_casos;
+CREATE TRIGGER tg_set_fecha_vencimiento
+  BEFORE INSERT ON pqrs_casos
+  FOR EACH ROW EXECUTE FUNCTION fn_set_fecha_vencimiento();
+
+-- 8. RLS en sla_regimen_config
+ALTER TABLE sla_regimen_config ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS sla_config_select ON sla_regimen_config;
+CREATE POLICY sla_config_select ON sla_regimen_config
+  FOR SELECT USING (true);

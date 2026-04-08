@@ -424,3 +424,72 @@ async def zoho_health_check(
     except Exception as e:
         return {"status": "error", "email_buzon": buzon["email_buzon"],
                 "puede_enviar": False, "mensaje": str(e)}
+
+
+@router.get("/tenant/regimen")
+async def get_regimen_sla(
+    current_user: UserInToken = Depends(get_current_user),
+    conn=Depends(get_db_connection),
+):
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(status_code=403, detail="Solo administradores")
+    row = await conn.fetchrow(
+        "SELECT regimen_sla FROM clientes_tenant WHERE id = $1",
+        uuid.UUID(current_user.tenant_uuid)
+    )
+    return {"regimen_sla": row["regimen_sla"] if row else "GENERAL"}
+
+
+@router.patch("/tenant/regimen")
+async def set_regimen_sla(
+    body: dict,
+    current_user: UserInToken = Depends(get_current_user),
+    conn=Depends(get_db_connection),
+):
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(status_code=403, detail="Solo administradores")
+    regimen = body.get("regimen_sla", "GENERAL")
+    REGIMENES_VALIDOS = [
+        "GENERAL", "FINANCIERO", "SALUD",
+        "SERVICIOS_PUBLICOS", "TELECOMUNICACIONES"
+    ]
+    if regimen not in REGIMENES_VALIDOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Régimen inválido. Opciones: {REGIMENES_VALIDOS}"
+        )
+    await conn.execute(
+        "UPDATE clientes_tenant SET regimen_sla = $1 WHERE id = $2",
+        regimen,
+        uuid.UUID(current_user.tenant_uuid)
+    )
+    return {
+        "ok": True,
+        "regimen_sla": regimen,
+        "mensaje": f"Régimen actualizado a {regimen}. Los casos nuevos usarán los plazos correspondientes."
+    }
+
+
+@router.get("/tenant/sla-config")
+async def get_sla_config(
+    current_user: UserInToken = Depends(get_current_user),
+    conn=Depends(get_db_connection),
+):
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(status_code=403, detail="Solo administradores")
+    regimen = await conn.fetchval(
+        "SELECT regimen_sla FROM clientes_tenant WHERE id = $1",
+        uuid.UUID(current_user.tenant_uuid)
+    )
+    regimen = regimen or "GENERAL"
+    rows = await conn.fetch(
+        """SELECT tipo_caso, dias_habiles, norma, descripcion
+           FROM sla_regimen_config
+           WHERE regimen = $1
+           ORDER BY tipo_caso""",
+        regimen
+    )
+    return {
+        "regimen_sla": regimen,
+        "plazos": [dict(r) for r in rows]
+    }
