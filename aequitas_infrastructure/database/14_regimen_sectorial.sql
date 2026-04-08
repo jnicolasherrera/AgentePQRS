@@ -3,6 +3,37 @@
 -- Normativa: SFC Circular Básica Jurídica — QUEJA/RECLAMO = 8 días
 -- ═══════════════════════════════════════════════════════════════
 
+-- 0. Tabla festivos_colombia (necesaria para calcular_fecha_vencimiento)
+CREATE TABLE IF NOT EXISTS festivos_colombia (
+  fecha DATE PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL
+);
+
+INSERT INTO festivos_colombia (fecha, nombre) VALUES
+  ('2026-01-01', 'Año Nuevo'),
+  ('2026-01-12', 'Día de los Reyes Magos'),
+  ('2026-03-23', 'Día de San José'),
+  ('2026-03-29', 'Domingo de Ramos'),
+  ('2026-03-30', 'Lunes Santo'),
+  ('2026-03-31', 'Martes Santo'),
+  ('2026-04-01', 'Miércoles Santo'),
+  ('2026-04-02', 'Jueves Santo'),
+  ('2026-04-03', 'Viernes Santo'),
+  ('2026-05-01', 'Día del Trabajo'),
+  ('2026-05-18', 'Día de la Ascensión'),
+  ('2026-06-08', 'Corpus Christi'),
+  ('2026-06-15', 'Sagrado Corazón'),
+  ('2026-06-29', 'San Pedro y San Pablo'),
+  ('2026-07-20', 'Día de la Independencia'),
+  ('2026-08-07', 'Batalla de Boyacá'),
+  ('2026-08-17', 'La Asunción de la Virgen'),
+  ('2026-10-12', 'Día de la Raza'),
+  ('2026-11-02', 'Todos los Santos'),
+  ('2026-11-16', 'Independencia de Cartagena'),
+  ('2026-12-08', 'Día de la Inmaculada Concepción'),
+  ('2026-12-25', 'Día de Navidad')
+ON CONFLICT (fecha) DO NOTHING;
+
 -- 1. Columna regimen_sla en clientes_tenant
 ALTER TABLE clientes_tenant
   ADD COLUMN IF NOT EXISTS regimen_sla VARCHAR(50)
