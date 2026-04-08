@@ -232,7 +232,7 @@ async def master_worker():
                     
                     # Round-robin: obtener analistas activos del tenant
                     analistas = await conn.fetch(
-                        "SELECT id FROM usuarios WHERE cliente_id = $1 AND rol = 'analista' AND is_active = TRUE ORDER BY created_at ASC",
+                        "SELECT id FROM usuarios WHERE cliente_id = $1 AND rol IN ('analista', 'abogado') AND is_active = TRUE ORDER BY created_at ASC",
                         c_id
                     )
                     asignado_a = None
