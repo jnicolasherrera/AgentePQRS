@@ -86,7 +86,7 @@ export default function DashboardPage() {
   const { tickets, connected, removeTicket } = useSSEStream({ onTutelaUrgente: handleTutelaUrgente });
 
   const handleCasoStatusChange = useCallback((casoId: string, changes: Record<string, unknown>) => {
-    if (changes.es_pqrs === false) removeTicket(casoId);
+    if (changes.es_pqrs === false || changes._deleted) removeTicket(casoId);
   }, [removeTicket]);
 
   if (!mounted || !isAuthenticated) return null;

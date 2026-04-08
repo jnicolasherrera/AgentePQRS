@@ -254,8 +254,8 @@ async def master_worker():
                         logger.info(f"⏭️  Email ya procesado, ignorando: {em['id'][:20]}")
                         continue
 
-                    # Acuse de recibo solo para Abogados Recovery
-                    if str(c_id) == TENANT_ABOGADOS_RECOVERY:
+                    # Acuse de recibo solo para Abogados Recovery (excluye tutelas)
+                    if str(c_id) == TENANT_ABOGADOS_RECOVERY and resultado.tipo.value != "TUTELA":
                         try:
                             radicado = f"PQRS-{dt.year}-{str(db_id)[:8].upper()}"
                             PLAZOS = {

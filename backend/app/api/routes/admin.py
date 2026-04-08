@@ -308,6 +308,46 @@ async def eliminar_no_pqrs_lote(
     return {"ok": True, "deleted_count": len(uuids), "deleted_ids": body.caso_ids}
 
 
+class DeleteCasosLoteRequest(BaseModel):
+    caso_ids: List[str]
+
+
+@router.delete("/casos/lote")
+async def eliminar_casos_lote(
+    body: DeleteCasosLoteRequest,
+    current_user: UserInToken = Depends(get_current_user),
+    conn = Depends(get_db_connection),
+) -> Dict[str, Any]:
+    if current_user.role not in ['admin', 'super_admin']:
+        raise HTTPException(status_code=403, detail="Solo administradores")
+    if not body.caso_ids:
+        raise HTTPException(status_code=400, detail="Debe enviar al menos un caso_id")
+
+    es_super = current_user.role == 'super_admin'
+    uuids = [uuid.UUID(cid) for cid in body.caso_ids]
+
+    tenant_filter = "" if es_super else " AND cliente_id = $2::uuid"
+    tenant_params = [] if es_super else [uuid.UUID(current_user.tenant_uuid)]
+
+    rows = await conn.fetch(
+        f"SELECT id FROM pqrs_casos WHERE id = ANY($1::uuid[]){tenant_filter}",
+        uuids, *tenant_params
+    )
+
+    found_ids = {r["id"] for r in rows}
+    not_found = [str(uid) for uid in uuids if uid not in found_ids]
+
+    if not_found:
+        raise HTTPException(status_code=404, detail=f"Casos no encontrados: {', '.join(not_found)}")
+
+    await conn.execute(
+        f"DELETE FROM pqrs_casos WHERE id = ANY($1::uuid[]){tenant_filter}",
+        uuids, *tenant_params
+    )
+
+    return {"ok": True, "deleted_count": len(uuids), "deleted_ids": body.caso_ids}
+
+
 @router.get("/clientes")
 async def listar_clientes(
     current_user: UserInToken = Depends(get_current_user),

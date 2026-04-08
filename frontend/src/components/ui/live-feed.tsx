@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mail, Wifi, WifiOff, ArrowRight, AlertTriangle, Send, CheckSquare, Square, Search, ChevronLeft, ChevronRight, ArrowUpDown } from "lucide-react";
+import { Mail, Wifi, WifiOff, ArrowRight, AlertTriangle, Send, CheckSquare, Square, Search, ChevronLeft, ChevronRight, ArrowUpDown, Trash2 } from "lucide-react";
 import type { TicketBoard } from "@/hooks/useSSEStream";
-import { api } from "@/store/authStore";
+import { api, useAuthStore } from "@/store/authStore";
 import { CasoDetailOverlay } from "./caso-detail-overlay";
 import { BorradorDrawer } from "./borrador-drawer";
 import { FirmaModal } from "./firma-modal";
@@ -59,7 +59,13 @@ export function LiveFeed({ tickets, connected, maxItems, onCasoStatusChange, ena
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [pageSize, setPageSize] = useState<number>(20);
   const [currentPage, setCurrentPage] = useState(1);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteSeleccionados, setDeleteSeleccionados] = useState<Set<string>>(new Set());
+  const [deleteMode, setDeleteMode] = useState(false);
   const recent = maxItems ? tickets.slice(0, maxItems) : tickets;
+  const user = useAuthStore(s => s.user);
+  const isAdmin = user?.rol === "admin" || user?.rol === "super_admin";
 
   const fetchPendientes = useCallback(() => {
     if (!enableResponse) return;
@@ -78,6 +84,44 @@ export function LiveFeed({ tickets, connected, maxItems, onCasoStatusChange, ena
   useEffect(() => { setCurrentPage(1); }, [filtro, estadoFiltro, searchQuery, selectedClienteId, sortKey, sortDir, pageSize]);
 
   const getPendiente = (ticketId: string) => pendientes.find(p => p.id === ticketId);
+
+  const toggleDeleteSeleccion = (id: string) => {
+    setDeleteSeleccionados(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleDeleteSelectAll = () => {
+    if (deleteSeleccionados.size === paginatedItems.length) {
+      setDeleteSeleccionados(new Set());
+    } else {
+      setDeleteSeleccionados(new Set(paginatedItems.map(t => t.id)));
+    }
+  };
+
+  const handleDeleteCasos = async () => {
+    if (deleteSeleccionados.size === 0) return;
+    setDeleting(true);
+    try {
+      await api.delete("/admin/casos/lote", {
+        data: { caso_ids: Array.from(deleteSeleccionados) },
+      });
+      setDeleteSeleccionados(new Set());
+      setShowDeleteModal(false);
+      setDeleteMode(false);
+      // Refresh via SSE will update tickets, but also remove from local state
+      if (onCasoStatusChange) {
+        deleteSeleccionados.forEach(id => onCasoStatusChange(id, { _deleted: true }));
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const toggleSeleccion = (id: string) => {
     setSeleccionados(prev => {
@@ -220,6 +264,32 @@ export function LiveFeed({ tickets, connected, maxItems, onCasoStatusChange, ena
             ))}
           </div>
 
+          {/* Delete mode toggle for admins */}
+          {isAdmin && (
+            <div className="agente items-center gap-2">
+              <button
+                onClick={() => { setDeleteMode(d => !d); setDeleteSeleccionados(new Set()); }}
+                className={`agente items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  deleteMode
+                    ? "bg-red-500/20 border border-red-500/40 text-red-400"
+                    : "bg-white/5 border border-white/10 text-slate-400 hover:bg-white/10"
+                }`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {deleteMode ? "Cancelar seleccion" : "Eliminar correos"}
+              </button>
+              {deleteMode && deleteSeleccionados.size > 0 && (
+                <button
+                  onClick={() => setShowDeleteModal(true)}
+                  className="agente items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg transition-all"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Eliminar {deleteSeleccionados.size} caso{deleteSeleccionados.size > 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Search + Sort + Page size */}
           <div className="agente items-center gap-3">
             <div className="relative agente-1">
@@ -302,6 +372,17 @@ export function LiveFeed({ tickets, connected, maxItems, onCasoStatusChange, ena
         </div>
       ) : (
         <div className="agente agente-col gap-3">
+          {deleteMode && paginatedItems.length > 0 && (
+            <div className="agente items-center gap-2 px-2">
+              <button onClick={toggleDeleteSelectAll} className="text-slate-400 hover:text-white transition-colors">
+                {deleteSeleccionados.size === paginatedItems.length
+                  ? <CheckSquare className="w-4 h-4 text-red-400" />
+                  : <Square className="w-4 h-4" />
+                }
+              </button>
+              <span className="text-xs text-slate-500">Seleccionar todos</span>
+            </div>
+          )}
           <AnimatePresence initial={false}>
             {paginatedItems.map((t, i) => {
               const p = PRIORIDAD[t.severity] ?? PRIORIDAD.MEDIA;
@@ -319,6 +400,18 @@ export function LiveFeed({ tickets, connected, maxItems, onCasoStatusChange, ena
                   tabIndex={0}
                   className={`group w-full text-left border-l-2 ${p.border} bg-white/[0.03] hover:bg-white/[0.06] border border-white/8 hover:border-white/15 rounded-2xl px-5 py-4 agente items-center gap-4 transition-all cursor-pointer`}
                 >
+                  {/* Delete checkbox */}
+                  {deleteMode && (
+                    <div className="shrink-0" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => toggleDeleteSeleccion(t.id)} className="text-slate-400 hover:text-white transition-colors">
+                        {deleteSeleccionados.has(t.id)
+                          ? <CheckSquare className="w-4 h-4 text-red-400" />
+                          : <Square className="w-4 h-4" />
+                        }
+                      </button>
+                    </div>
+                  )}
+
                   {/* Indicator */}
                   <div className="agente agente-col items-center gap-1 shrink-0">
                     <div className={`w-2 h-2 rounded-full ${p.dot}`} />
@@ -414,6 +507,60 @@ export function LiveFeed({ tickets, connected, maxItems, onCasoStatusChange, ena
           }}
         />
       )}
+
+      {/* Delete confirmation modal */}
+      <AnimatePresence>
+        {showDeleteModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 agente items-center justify-center"
+            style={{ background: "rgba(0, 0, 0, 0.8)" }}
+            onClick={() => !deleting && setShowDeleteModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={e => e.stopPropagation()}
+              className="bg-[#0d1117] border border-red-500/30 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl"
+            >
+              <div className="agente items-center gap-3 mb-4">
+                <div className="p-2 bg-red-500/10 rounded-xl">
+                  <AlertTriangle className="w-6 h-6 text-red-400" />
+                </div>
+                <h3 className="text-lg font-bold text-white">Confirmar eliminacion</h3>
+              </div>
+              <p className="text-sm text-slate-300 mb-6">
+                Se eliminar{deleteSeleccionados.size > 1 ? "an" : "a"}{" "}
+                <strong className="text-red-400">{deleteSeleccionados.size} caso{deleteSeleccionados.size > 1 ? "s" : ""}</strong>.
+                Esta accion no se puede deshacer.
+              </p>
+              <div className="agente gap-3 justify-end">
+                <button
+                  onClick={() => setShowDeleteModal(false)}
+                  disabled={deleting}
+                  className="px-4 py-2 bg-white/5 border border-white/10 text-slate-300 text-sm font-bold rounded-xl hover:bg-white/10 transition-all disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleDeleteCasos}
+                  disabled={deleting}
+                  className="agente items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-bold rounded-xl transition-all disabled:opacity-50"
+                >
+                  {deleting
+                    ? <div className="w-4 h-4 border-2 border-white/50 border-t-white rounded-full animate-spin" />
+                    : <Trash2 className="w-4 h-4" />
+                  }
+                  {deleting ? "Eliminando..." : "Eliminar"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {firmaOpen && (
         <FirmaModal

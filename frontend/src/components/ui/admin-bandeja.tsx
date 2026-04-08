@@ -144,7 +144,8 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
     if (seleccionados.size === 0) return;
     setDeleting(true);
     try {
-      await api.delete("/admin/casos/no-pqrs/lote", {
+      const endpoint = filtroNoPqrs ? "/admin/casos/no-pqrs/lote" : "/admin/casos/lote";
+      await api.delete(endpoint, {
         data: { caso_ids: Array.from(seleccionados) },
       });
       setItems(prev => prev.filter(c => !seleccionados.has(c.id)));
@@ -200,7 +201,7 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
 
       {/* Action bar when items selected */}
       <AnimatePresence>
-        {filtroNoPqrs && seleccionados.size > 0 && (
+        {seleccionados.size > 0 && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -234,16 +235,14 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="bg-white/[0.02] text-slate-400 text-[10px] font-black uppercase tracking-widest border-b border-white/5">
-                  {filtroNoPqrs && (
-                    <th className="px-3 py-3 w-10">
-                      <button onClick={toggleSelectAll} className="text-slate-400 hover:text-white transition-colors">
-                        {seleccionados.size === items.length && items.length > 0
-                          ? <CheckSquare className="w-4 h-4 text-red-400" />
-                          : <Square className="w-4 h-4" />
-                        }
-                      </button>
-                    </th>
-                  )}
+                  <th className="px-3 py-3 w-10">
+                    <button onClick={toggleSelectAll} className="text-slate-400 hover:text-white transition-colors">
+                      {seleccionados.size === items.length && items.length > 0
+                        ? <CheckSquare className="w-4 h-4 text-red-400" />
+                        : <Square className="w-4 h-4" />
+                      }
+                    </button>
+                  </th>
                   <th className="px-4 py-3 cursor-pointer select-none hover:text-white transition-colors" onClick={() => toggleSort("radicado")}>
                     <span className="agente items-center gap-1">Radicado <SortIcon k="radicado" /></span>
                   </th>
@@ -279,16 +278,14 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                     onClick={() => setSelectedId(caso.id)}
                     className={`cursor-pointer hover:bg-white/[0.03] transition-colors ${!caso.es_pqrs ? "border-l-2 border-l-red-500/50" : ""} ${seleccionados.has(caso.id) ? "bg-red-500/5" : ""}`}
                   >
-                    {filtroNoPqrs && (
-                      <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
-                        <button onClick={() => toggleSeleccion(caso.id)} className="text-slate-400 hover:text-white transition-colors">
-                          {seleccionados.has(caso.id)
-                            ? <CheckSquare className="w-4 h-4 text-red-400" />
-                            : <Square className="w-4 h-4" />
-                          }
-                        </button>
-                      </td>
-                    )}
+                    <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => toggleSeleccion(caso.id)} className="text-slate-400 hover:text-white transition-colors">
+                        {seleccionados.has(caso.id)
+                          ? <CheckSquare className="w-4 h-4 text-red-400" />
+                          : <Square className="w-4 h-4" />
+                        }
+                      </button>
+                    </td>
                     <td className="px-4 py-3">
                       <span className="font-mono text-xs text-primary/80">
                         {caso.numero_radicado || caso.id.slice(0, 8)}
@@ -405,7 +402,7 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
               </div>
               <p className="text-sm text-slate-300 mb-6">
                 Se eliminar{seleccionados.size > 1 ? "an" : "a"}{" "}
-                <strong className="text-red-400">{seleccionados.size} caso{seleccionados.size > 1 ? "s" : ""} No PQRS</strong>.
+                <strong className="text-red-400">{seleccionados.size} caso{seleccionados.size > 1 ? "s" : ""}</strong>.
                 Esta accion no se puede deshacer.
               </p>
               <div className="agente gap-3 justify-end">
