@@ -124,6 +124,10 @@ async def historial_enviados(
     if current_user.role not in ROLES_PERMITIDOS:
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[ENVIADOS] role={current_user.role} usuario_id={current_user.usuario_id} tenant={current_user.tenant_uuid} email={current_user.email}")
+
     es_super = current_user.role == "super_admin"
 
     if es_super and not cliente_id:
