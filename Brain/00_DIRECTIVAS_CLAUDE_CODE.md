@@ -86,3 +86,27 @@ Usuarios de prueba staging:
 
 > NOTA: No tiene dominio propio — solo acceso por IP.
 > Si nginx crashea: verificar que existan los 3 pares de cert/key en nginx/certs/.
+
+
+---
+
+## Comportamiento exclusivo del demo_worker
+
+El `demo_worker.py` implementa un flujo de **auto-envío de respuesta IA** que es exclusivo del tenant demo y NO debe replicarse a otros tenants sin pasar por aprobación humana.
+
+### Flujo demo (4 pasos)
+1. Ingesta del email vía Gmail IMAP (`fetch_unread_gmail`)
+2. Acuse de recibo vía Gmail SMTP (`send_acuse_demo`)
+3. Generación del borrador IA (`generar_borrador_para_caso`)
+4. **Auto-envío del borrador** vía Gmail SMTP (`send_respuesta_ia_demo`) → marca caso como `CERRADO`/`ENVIADO`
+
+### Por qué es exclusivo
+- Recovery y demás tenants productivos están sujetos a SLAs regulatorios (Ley 1755/2015, SFC) que exigen aprobación humana antes de enviar respuestas legales.
+- El auto-envío demo existe únicamente para mostrar el ciclo end-to-end completo en demos comerciales sin requerir un humano aprobando en tiempo real.
+- Está protegido por el hecho de que únicamente corre en el contenedor `demo_worker` (tenant `DEMO_TENANT_ID = 11111111-1111-1111-1111-111111111111`). `master_worker_outlook.py` no tiene este path.
+
+### Auditoría
+Cada envío auto se registra en `audit_log_respuestas` con `accion='ENVIADO_AUTO_DEMO'` y `metadata.auto_aprobado_por='demo_worker'` para trazabilidad. `aprobado_por` queda en NULL (no hay usuario humano).
+
+### ⚠️ Regla
+NUNCA copiar este patrón a `master_worker_outlook.py` ni a ningún flujo de tenant productivo sin pasar por aprobación regulatoria explícita.

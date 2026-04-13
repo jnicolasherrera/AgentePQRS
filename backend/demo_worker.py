@@ -209,6 +209,100 @@ def send_acuse_demo(to_email: str, numero_radicado: str, tipo: str, nombre_clien
         logger.error(f"SMTP error al enviar acuse: {e}")
 
 
+# ── Auto-envío de respuesta IA (EXCLUSIVO TENANT DEMO) ───────────────────────
+#
+# ADVERTENCIA: Esta función auto-envía la respuesta IA generada sin pasar por
+# aprobación humana. Es aceptable ÚNICAMENTE para el tenant demo (showcase
+# público en bandeja Gmail controlada). En Abogados Recovery y cualquier otro
+# tenant productivo el envío sigue siendo human-in-the-loop vía
+# POST /api/v2/casos/aprobar-lote. NO replicar este patrón a master_worker_outlook
+# ni a ningún otro worker sin aprobación regulatoria explícita.
+
+def _md_to_html_demo(text: str) -> str:
+    """Conversión markdown→HTML mínima para respuestas IA del demo."""
+    import re
+    text = re.sub(r'^### (.+)$', r'<h4 style="margin:12px 0 4px">\1</h4>', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$',  r'<h3 style="margin:14px 0 6px">\1</h3>', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.+)$',   r'<h2 style="margin:16px 0 8px">\1</h2>', text, flags=re.MULTILINE)
+    text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+    text = re.sub(r'__(.+?)__', r'<strong>\1</strong>', text)
+    text = re.sub(r'\*([^*\n]+?)\*', r'<em>\1</em>', text)
+    text = re.sub(r'_([^_\n]+?)_', r'<em>\1</em>', text)
+    return text.replace("\n", "<br>")
+
+
+def send_respuesta_ia_demo(to_email: str, asunto_original: str, body_md: str, numero_radicado: str) -> bool:
+    """
+    Envía la respuesta IA (borrador_respuesta) al remitente vía Gmail SMTP.
+    Retorna True si el envío fue exitoso, False en otro caso.
+    """
+    if not GMAIL_PASS:
+        logger.warning("[DEMO RESPUESTA IA] DEMO_GMAIL_PASSWORD no configurado — respuesta IA no enviada")
+        return False
+
+    body_html = _md_to_html_demo(body_md.strip())
+    subject_clean = (asunto_original or "Su PQRS").strip()
+    if subject_clean.lower().startswith("re:"):
+        reply_subject = f"{subject_clean} — Radicado {numero_radicado}"
+    else:
+        reply_subject = f"Re: {subject_clean} — Radicado {numero_radicado}"
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0">
+    <tr><td align="center">
+      <table width="640" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08)">
+        <tr>
+          <td style="background:#0a0a0a;padding:24px 32px;">
+            <span style="color:#9D50FF;font-size:22px;font-weight:bold;letter-spacing:1px;">FlexPQR</span>
+            <span style="color:#888;font-size:13px;margin-left:8px;">Respuesta oficial</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:24px 32px 8px">
+            <p style="margin:0 0 6px;color:#6B7280;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;">Radicado</p>
+            <p style="margin:0;color:#111;font-size:18px;font-weight:bold;letter-spacing:1px;">{numero_radicado}</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 32px 24px;color:#374151;font-size:15px;line-height:1.6">
+            {body_html}
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:16px 32px">
+            <p style="margin:0;color:#9CA3AF;font-size:12px">
+              Este mensaje fue generado automáticamente por FlexPQR (entorno demo).
+              Conserve el número de radicado para cualquier seguimiento posterior.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["From"]    = f"FlexPQR <{GMAIL_USER}>"
+        msg["To"]      = to_email
+        msg["Subject"] = reply_subject
+        msg.attach(MIMEText(html, "html", "utf-8"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(GMAIL_USER, GMAIL_PASS)
+            server.sendmail(GMAIL_USER, to_email, msg.as_string())
+
+        logger.info(f"[DEMO RESPUESTA IA] Enviada → {to_email} | {numero_radicado}")
+        return True
+    except Exception as e:
+        logger.error(f"[DEMO RESPUESTA IA] SMTP error: {e}")
+        return False
+
+
 # ── Worker principal ──────────────────────────────────────────────────────────
 
 async def demo_worker():
@@ -300,6 +394,55 @@ async def demo_worker():
                         radicado=radicado,
                         email_origen=em["sender"],
                     )
+
+                    # ── Auto-envío respuesta IA (SOLO tenant demo) ──
+                    borrador_row = await conn.fetchrow(
+                        "SELECT borrador_respuesta, borrador_estado FROM pqrs_casos WHERE id=$1",
+                        db_id,
+                    )
+                    borrador_text = (borrador_row["borrador_respuesta"] or "").strip() if borrador_row else ""
+                    if borrador_text:
+                        enviado_ok = send_respuesta_ia_demo(
+                            to_email=em["sender"],
+                            asunto_original=em["subject"],
+                            body_md=borrador_text,
+                            numero_radicado=radicado,
+                        )
+                        if enviado_ok:
+                            await conn.execute(
+                                """UPDATE pqrs_casos
+                                   SET borrador_estado='ENVIADO',
+                                       estado='CERRADO',
+                                       enviado_at=NOW(),
+                                       aprobado_at=NOW()
+                                   WHERE id=$1""",
+                                db_id,
+                            )
+                            await conn.execute(
+                                """INSERT INTO audit_log_respuestas (caso_id, accion, metadata)
+                                   VALUES ($1, 'ENVIADO_AUTO_DEMO', $2)""",
+                                db_id,
+                                json.dumps({
+                                    "email_destino": em["sender"],
+                                    "asunto": em["subject"],
+                                    "metodo_envio": "gmail_smtp",
+                                    "auto_aprobado_por": "demo_worker",
+                                    "nota": "Auto-envío exclusivo del tenant demo — sin aprobación humana",
+                                }),
+                            )
+                            cambio = {
+                                "id": str(db_id),
+                                "tenant_id": str(DEMO_TENANT_ID),
+                                "estado": "CERRADO",
+                                "borrador_estado": "ENVIADO",
+                                "event": "caso_estado_cambiado",
+                            }
+                            await r.publish("pqrs_stream_v2", json.dumps(cambio))
+                            logger.info(f"[DEMO RESPUESTA IA] Caso {db_id} auto-cerrado (ENVIADO)")
+                        else:
+                            logger.warning(f"[DEMO RESPUESTA IA] Envío fallido — caso {db_id} queda en BORRADOR")
+                    else:
+                        logger.warning(f"[DEMO RESPUESTA IA] Borrador vacío para caso {db_id} — no se envía")
 
             # ── Reset: eliminar casos demo más viejos que RESET_MINUTES ──────
             old_ids = await conn.fetch(
