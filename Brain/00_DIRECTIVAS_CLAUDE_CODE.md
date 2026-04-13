@@ -110,3 +110,55 @@ Cada envío auto se registra en `audit_log_respuestas` con `accion='ENVIADO_AUTO
 
 ### ⚠️ Regla
 NUNCA copiar este patrón a `master_worker_outlook.py` ni a ningún flujo de tenant productivo sin pasar por aprobación regulatoria explícita.
+
+
+---
+
+## 3.5 Regla anti-drift de branches
+
+Antes de cualquier PR `develop → main` (incluso si es para un fix urgente), ejecutar:
+
+```bash
+git fetch origin
+git log staging..develop --oneline
+git diff staging..develop --stat
+```
+
+Esto muestra qué otros commits van a viajar de polizón en el merge. Si hay más de 1-2 commits relacionados al fix, **STOP** y evaluar:
+
+1. ¿Todos esos commits deberían ir a producción ahora?
+2. ¿Alguno depende de migraciones de DB no aplicadas?
+3. ¿Alguno introduce features grandes sin testing en staging?
+
+Si la respuesta a 2 o 3 es sí → **NO mergear develop→main**. Crear branch `hotfix/descripcion` desde el commit del runtime actual de prod (ver `git log` en server EC2), cherry-pickear solo el fix, abrir PR aislado a main.
+
+### Verificación adicional antes del rebuild de cualquier container
+
+Aunque el cherry-pick esté aislado, al rebuildar un container el Dockerfile copia **todo el contexto** del disco del server, que puede incluir archivos de otros commits no relacionados. Antes del rebuild, verificar imports transitivos del servicio a rebuildar contra la lista de archivos que cambiaron entre el runtime actual y el commit en disco:
+
+```bash
+# Módulos cambiados en el área crítica
+git diff <runtime_commit>..<disco_commit> --stat -- backend/app/core/ backend/app/services/
+
+# Imports directos del servicio (ej. master_worker_outlook.py)
+grep -nE "^(from|import) app\." backend/<servicio>.py
+
+# Cruce: si algún módulo importado aparece en la lista de cambiados, revisar el diff completo
+git diff <runtime_commit>..<disco_commit> -- backend/app/services/<modulo>.py
+```
+
+Si hay intersección, leer el diff y validar: (a) APIs compatibles, (b) cambios aditivos/defensivos, (c) sin nuevos imports o símbolos removidos, (d) env vars nuevas con defaults seguros.
+
+### Aprendizaje histórico
+
+El **2026-04-13** esta regla se usó por primera vez. El contexto:
+
+1. En la mañana mergeamos `develop → main` (PR #3) para desplegar un fix del `demo_worker`. El merge arrastró 4 commits de polizón, incluyendo el motor SLA sectorial completo (+227 líneas de endpoints admin en `admin.py`) que dependía de una migración de DB (`14_regimen_sectorial.sql`) que **nunca corrió** contra `pqrs_v2`. La tabla `festivos_colombia`, la tabla `sla_regimen_config` y la columna `clientes_tenant.regimen_sla` no existen en producción.
+
+2. Rebuildar `backend` con ese código habría expuesto 4 endpoints admin que fallan con `500 column "regimen_sla" does not exist` al primer click.
+
+3. Por la tarde, cuando se necesitó desplegar un segundo fix (`453e5ae` round-robin rol abogado), se creó el branch `hotfix/round-robin-abogado` desde `97f239e` (el runtime real de los containers, no el disco), se cherry-pickeó solo el fix, se mergeó a main via PR #4 y se rebuildó exclusivamente `master_worker_v2`. El backend quedó intacto con código viejo + endpoints admin sin exponer.
+
+4. Durante la validación previa al rebuild se descubrió que el pull no traía cambios de archivo netos (el contenido del fix ya estaba en `c0dab9d` desde el pull del deploy matutino). Esto reveló la necesidad de validar imports transitivos del servicio a rebuildar contra el diff `runtime..disco`, no solo contra el commit del hotfix.
+
+Ver `Brain/CHANGELOG.md` entrada de esa fecha y `Brain/DEUDAS_PENDIENTES.md` para el plan de deploy futuro del motor SLA sectorial.
