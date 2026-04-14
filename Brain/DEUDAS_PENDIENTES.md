@@ -60,3 +60,56 @@ Orden obligatorio:
 - Análisis forense completo del drift: ver `Brain/CHANGELOG.md` entrada `2026-04-13 (deploy nocturno)`.
 - Regla anti-drift que previno este deploy en caliente: `Brain/00_DIRECTIVAS_CLAUDE_CODE.md` sección 3.5.
 - Bug separado pendiente: visualización de `borrador_respuesta` en frontend pestaña Casos (tipo TS `Caso` no declara el campo).
+
+---
+
+## 2026-04-14 — Deudas descubiertas durante fix FirmaModal
+
+### Bug UX del FirmaModal (no bloqueante)
+
+**Severidad**: Baja (cosmético)
+**Archivo**: `frontend/src/components/ui/firma-modal.tsx`
+**Líneas**: 33-40
+
+**Descripción**: Después de confirmar el envío, el modal se cierra pero la notificación flotante no aparece visiblemente (o aparece por menos de 1 segundo). Además, el código siempre dispara `tipo='exito'` aunque `res.data.enviados` sea 0, lo cual produce notificaciones verdes engañosas del tipo *"0 respuesta(s) enviada(s) correctamente"* cuando en realidad el envío falló.
+
+**Fix propuesto**:
+
+```typescript
+if (res.data.enviados === 0 && res.data.errores.length > 0) {
+  setNotifEnvio({
+    tipo: 'error',
+    mensaje: `Envío falló: ${res.data.errores[0].motivo}`
+  });
+} else {
+  setNotifEnvio({
+    tipo: 'exito',
+    mensaje: `${res.data.enviados} respuesta(s) enviada(s) correctamente`
+  });
+}
+```
+
+**Cómo verificar**: después del fix, hacer smoke test desactivando `DEMO_GMAIL_USER` del backend y confirmar que aparece notificación roja con error específico.
+
+---
+
+### Kafka containers Exited hace 5+ días
+
+**Severidad**: Media (investigar por qué nadie se dio cuenta)
+
+**Evidencia**:
+```bash
+docker ps -a | grep kafka
+pqrs_staging_kafka  Exited (1) 5 days ago
+pqrs_v2_kafka       Exited (1) 5 days ago
+```
+
+El backend tiene manejo gracioso: intenta 5 veces conectarse a Kafka al arrancar, loguea `"Kafka no disponible — API arranca sin producer"`, y sigue funcionando. Los `GET`/`POST` de `/api/v2/*` se atienden normalmente porque el flujo principal (auth, casos, stats, SSE via Redis) no depende de Kafka.
+
+Kafka se usaba (presumiblemente) para publicar eventos secundarios a un event bus. Sin Kafka, esos eventos no se publican, pero no rompen el flujo principal.
+
+**Acción pendiente**:
+
+1. Investigar qué consumidores dependen de los eventos Kafka.
+2. Decidir si reactivar Kafka o si el event bus es deuda técnica a deprecar.
+3. Ajustar monitoreo para detectar cuando containers críticos quedan `Exited`.
