@@ -1,6 +1,7 @@
 # Variables de entorno — NUNCA subir
 .env
 .env.*
+!.env.example
 
 # Archivos pesados
 *.zip

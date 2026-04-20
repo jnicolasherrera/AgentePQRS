@@ -57,10 +57,10 @@ services:
     hostname: minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: adminminio
-      MINIO_ROOT_PASSWORD: adminpassword
-      MINIO_ACCESS_KEY: adminminio
-      MINIO_SECRET_KEY: adminpassword
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
     ports:
       - "9020:9000"
       - "9021:9001"
@@ -83,8 +83,8 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - KAFKA_BOOTSTRAP_SERVERS=kafka_v2:29092
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=adminminio
-      - MINIO_SECRET_KEY=adminpassword
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - MINIO_PUBLIC_URL=http://54.233.39.211:9020
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ACCESS_TOKEN_EXPIRE_MINUTES=480
@@ -106,8 +106,8 @@ services:
       - DATABASE_URL=postgresql://pqrs_admin:pg_password@postgres_v2:5432/pqrs_v2
       - REDIS_URL=redis://:NuSvuOWiQtGWkZleg-zwqUZzs6DewuaK@redis_v2:6379
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=adminminio
-      - MINIO_SECRET_KEY=adminpassword
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - MINIO_PUBLIC_URL=http://54.233.39.211:9020
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
@@ -130,12 +130,16 @@ services:
       - DATABASE_URL=postgresql://pqrs_admin:pg_password@postgres_v2:5432/pqrs_v2
       - REDIS_URL=redis://:NuSvuOWiQtGWkZleg-zwqUZzs6DewuaK@redis_v2:6379
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - DEMO_GMAIL_USER=democlasificador@gmail.com
       - DEMO_GMAIL_PASSWORD=${DEMO_GMAIL_PASSWORD:-}
       - DEMO_RESET_MINUTES=30
     depends_on:
       - postgres_v2
       - redis_v2
+      - minio_v2
     restart: unless-stopped
 
   frontend_v2:
