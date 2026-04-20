@@ -35,3 +35,8 @@ uploads/
 Brain_backup_*/
 brain_snapshots/
 Brain/.obsidian/
+
+# Backups locales del Brain y snapshots
+Brain_backup_*/
+brain_snapshots/
+Brain/.obsidian/
