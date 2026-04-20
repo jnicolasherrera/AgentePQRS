@@ -30,3 +30,8 @@ uploads/
 # Archivos locales
 *.bak
 *.bak2
+
+# Backups locales del Brain y snapshots
+Brain_backup_*/
+brain_snapshots/
+Brain/.obsidian/
