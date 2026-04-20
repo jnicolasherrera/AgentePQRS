@@ -6,6 +6,7 @@ import imaplib
 import smtplib
 import email as email_lib
 import os
+import re
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta
@@ -17,6 +18,7 @@ from email.header import decode_header, make_header
 from app.services.ai_engine import clasificar_hibrido
 from app.services.plantilla_engine import generar_borrador_para_caso
 from app.services.clasificador import parece_pqrs
+from app.services.storage_engine import upload_file as upload_to_minio, client as minio_client, BUCKET_NAME as MINIO_BUCKET
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("DEMO_WORKER")
@@ -32,6 +34,17 @@ RESET_MINUTES = int(os.environ.get("DEMO_RESET_MINUTES", "30"))
 # UUID fijo para el tenant de demo (debe existir en clientes_tenant)
 DEMO_TENANT_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 DEMO_ABOGADO_ID = uuid.UUID("33333333-3333-3333-3333-333333333333")
+
+MAX_ATTACHMENT_MB = int(os.environ.get("MAX_ATTACHMENT_MB", "10"))
+MAX_ATTACHMENTS_PER_EMAIL = 5
+ALLOWED_MIME_TYPES = {
+    "application/pdf",
+    "image/jpeg", "image/png", "image/gif",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/msword", "application/vnd.ms-excel",
+    "application/octet-stream",
+}
 
 TIPO_INFO = {
     "TUTELA":      ("Acción de Tutela",   "CRÍTICA", "48 horas"),
@@ -61,13 +74,42 @@ def fetch_unread_gmail():
             raw = email_lib.message_from_bytes(data[0][1])
 
             body = ""
+            adjuntos = []
             if raw.is_multipart():
                 for part in raw.walk():
-                    if part.get_content_type() == "text/plain":
+                    ct = part.get_content_type()
+                    disp = str(part.get("Content-Disposition", ""))
+
+                    # Extraer body de texto
+                    if ct == "text/plain" and "attachment" not in disp and not body:
                         payload = part.get_payload(decode=True)
                         if payload:
                             body = payload.decode("utf-8", errors="ignore")
-                            break
+                        continue
+
+                    # Extraer adjuntos
+                    filename = part.get_filename()
+                    if not filename:
+                        continue
+                    if ct not in ALLOWED_MIME_TYPES:
+                        logger.info(f"📎 Adjunto ignorado (MIME no permitido): {filename} [{ct}]")
+                        continue
+                    if len(adjuntos) >= MAX_ATTACHMENTS_PER_EMAIL:
+                        logger.warning(f"📎 Límite de adjuntos alcanzado ({MAX_ATTACHMENTS_PER_EMAIL}), ignorando: {filename}")
+                        break
+                    content = part.get_payload(decode=True)
+                    if not content:
+                        continue
+                    size = len(content)
+                    if size > MAX_ATTACHMENT_MB * 1024 * 1024:
+                        logger.warning(f"📎 Adjunto excede {MAX_ATTACHMENT_MB}MB: {filename} ({size/(1024*1024):.1f}MB)")
+                        continue
+                    adjuntos.append({
+                        "filename": filename,
+                        "mime_type": ct,
+                        "size_bytes": size,
+                        "content": content,
+                    })
             else:
                 payload = raw.get_payload(decode=True)
                 if payload:
@@ -81,12 +123,16 @@ def fetch_unread_gmail():
             except Exception:
                 date = datetime.now(timezone.utc)
 
+            if adjuntos:
+                logger.info(f"📎 {len(adjuntos)} adjunto(s) extraídos de email: {[a['filename'] for a in adjuntos]}")
+
             emails.append({
                 "message_id": raw.get("Message-ID") or str(uuid.uuid4()),
                 "subject":    str(make_header(decode_header(raw.get("Subject", "(sin asunto)")))),
                 "sender":     sender,
                 "body":       body,
                 "date":       date,
+                "adjuntos":   adjuntos,
             })
             mail.store(imap_id, "+FLAGS", "\\Seen")
 
@@ -303,6 +349,36 @@ def send_respuesta_ia_demo(to_email: str, asunto_original: str, body_md: str, nu
         return False
 
 
+# ── Guardado de adjuntos ──────────────────────────────────────────────────────
+
+def _sanitize_filename(name: str) -> str:
+    """Elimina caracteres problemáticos del nombre de archivo."""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name)
+    return name[:200]
+
+
+async def save_adjuntos(conn, caso_id: uuid.UUID, adjuntos: list[dict]):
+    """Sube adjuntos a MinIO y los registra en pqrs_adjuntos."""
+    for adj in adjuntos:
+        try:
+            safe_name = _sanitize_filename(adj["filename"])
+            unique_name = f"{uuid.uuid4().hex[:8]}_{safe_name}"
+            path = await upload_to_minio(adj["content"], unique_name, folder=f"casos/{caso_id}")
+            if not path:
+                logger.warning(f"📎 MinIO upload falló para {adj['filename']} — caso {caso_id}")
+                continue
+            await conn.execute(
+                """INSERT INTO pqrs_adjuntos
+                       (caso_id, cliente_id, nombre_archivo, storage_path, content_type, tamano_bytes)
+                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                caso_id, DEMO_TENANT_ID, adj["filename"], path, adj["mime_type"], adj["size_bytes"],
+            )
+            logger.info(f"📎 Adjunto guardado: {adj['filename']} ({adj['size_bytes']/1024:.1f}KB) → {path}")
+        except Exception as e:
+            logger.warning(f"📎 Error guardando adjunto {adj['filename']}: {e}")
+            continue
+
+
 # ── Worker principal ──────────────────────────────────────────────────────────
 
 async def demo_worker():
@@ -355,6 +431,10 @@ async def demo_worker():
                 )
 
                 if db_id:
+                    # Guardar adjuntos antes de continuar con acuse/respuesta
+                    if em.get("adjuntos"):
+                        await save_adjuntos(conn, db_id, em["adjuntos"])
+
                     radicado = f"PQRS-{em['date'].year}-{str(db_id)[:8].upper()}"
                     await conn.execute(
                         """UPDATE pqrs_casos
@@ -455,6 +535,15 @@ async def demo_worker():
             )
             if old_ids:
                 ids = [r["id"] for r in old_ids]
+                # Limpiar archivos de MinIO antes de borrar registros
+                adj_paths = await conn.fetch(
+                    "SELECT storage_path FROM pqrs_adjuntos WHERE caso_id = ANY($1::uuid[])", ids,
+                )
+                for row in adj_paths:
+                    try:
+                        minio_client.remove_object(MINIO_BUCKET, row["storage_path"])
+                    except Exception:
+                        pass
                 await conn.execute("DELETE FROM audit_log_respuestas WHERE caso_id = ANY($1::uuid[])", ids)
                 await conn.execute("DELETE FROM pqrs_comentarios WHERE caso_id = ANY($1::uuid[])", ids)
                 await conn.execute("DELETE FROM pqrs_adjuntos WHERE caso_id = ANY($1::uuid[])", ids)
