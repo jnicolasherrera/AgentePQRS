@@ -16,7 +16,7 @@ async def get_dashboard_stats(
     conn = Depends(get_db_connection)
 ) -> Dict[str, Any]:
     es_super = current_user.role == 'super_admin'
-    es_abogado = current_user.role == 'analista'
+    es_abogado = current_user.role in ('analista', 'abogado')
 
     # Determinar el tenant a filtrar
     if es_super and cliente_id:

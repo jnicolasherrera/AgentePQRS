@@ -2,7 +2,7 @@ export interface User {
   id: string;
   email: string;
   nombre: string;
-  rol: "analista" | "coordinador" | "admin" | "auditor" | "super_admin";
+  rol: "analista" | "abogado" | "coordinador" | "admin" | "auditor" | "super_admin";
   tenant_uuid: string;
   usuario_id?: string;
   cliente_nombre?: string;

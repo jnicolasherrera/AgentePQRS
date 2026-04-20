@@ -98,7 +98,7 @@ async def _round_robin_analista(
         SELECT u.id
         FROM usuarios u
         WHERE u.cliente_id = $1
-          AND u.rol = 'analista'
+          AND u.rol IN ('analista', 'abogado')
           AND u.is_active = TRUE
         ORDER BY (
             SELECT COUNT(*)
