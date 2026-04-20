@@ -1,5 +1,114 @@
 # Brain Changelog
 
+## 2026-04-16 — Hardening AWS sprint cierre (QW3 CloudTrail + QW4 GuardDuty)
+
+### Contexto
+Continuación del sprint de hardening iniciado el 14-abril tras la auditoría de Dante Anelli. Objetivo del día: completar los Quick Wins 3 y 4 del plan AWS para alcanzar postura mínima defendible antes de próximas conversaciones con Bancolombia.
+
+### QW3 — CloudTrail multi-región a S3 ✅
+
+Bucket S3 dedicado creado con public access bloqueado, versionado activo, lifecycle (Glacier 90d, expiración 2555d), y bucket policy con condición `AWS:SourceArn` (anti confused-deputy):
+
+```
+Bucket: flexpqr-cloudtrail-logs
+Región: sa-east-1
+```
+
+Trail creado con validación SHA-256 activa:
+
+```
+Nombre: flexpqr-trail
+ARN:    arn:aws:cloudtrail:sa-east-1:336457597619:trail/flexpqr-trail
+Multi-región: Sí
+Log file validation: Habilitado
+Management events: Read + Write
+SSE-KMS: No habilitado (deuda DT-1)
+```
+
+Verificación end-to-end: logs llegando al bucket cada ~5 minutos, digest files SHA-256 cada hora, consultas desde consola CloudTrail funcionando.
+
+### Incidente durante la creación del trail
+
+La consola AWS creó por default un bucket auto-generado (`aws-cloudtrail-logs-336457597619-711f0891`) en lugar de usar el bucket `flexpqr-cloudtrail-logs` preexistente. Se editó el trail para apuntarlo al bucket correcto, se activó manualmente Log file validation (también off por default), se eliminó el bucket auto-creado. Lección: en wizards AWS, leer cada default antes de clickear Create.
+
+### QW4 — GuardDuty ✅
+
+Activado en `sa-east-1` desde consola web, trial 30 días gratis. Runtime Monitoring no activado (no aplica a Docker Compose sobre EC2; GuardDuty Runtime está orientado a EKS/ECS con agent).
+
+### Decisión de permisos
+
+`flexpqr-deploy` mantiene least privilege estricto: sin permisos IAM, sin CloudTrail write. La gestión de IAM/CloudTrail/policies de cuenta se hace desde consola web con sesión root (con MFA). El CLI con profile `flexpqr-deploy` se usa solo para operaciones EC2/S3/CloudWatch.
+
+### Deudas registradas al cierre
+
+- DT-1: SSE-KMS en CloudTrail (CMK dedicada)
+- DT-2: GuardDuty multi-región (us-east-1, us-west-2, eu-west-1, ap-southeast-1)
+- DT-3: Migrar `*FullAccess` a policies custom mínimas
+- DT-4: AWS IAM Identity Center cuando sumen Dante/Martín
+- DT-5: Rotación automática de access keys (cron + script trimestral)
+- DT-6: Retención CloudTrail 10 años si Bancolombia lo pide (ajustar 2555d → 3650d)
+- DT-7: Push commit Brain `0307fa1` al remoto (pendiente desde el 14-abril)
+- DT-8: Guardrail docker-compose prod vs local (script de diff pre-deploy)
+
+Ver `DEUDAS_PENDIENTES.md` sección "2026-04-15/16 — Deudas hardening AWS" y documento detallado `fixes/HARDENING_AWS_ABRIL_2026.md`.
+
+### Credenciales expuestas durante la sesión — rotar
+
+- App Password Gmail de `democlasificador@gmail.com` (revocar + regenerar)
+- Password Redis de `pqrs_v2_redis` (rotar)
+- Credenciales MinIO `adminminio/adminpassword` (rotar aunque ya eran conocidas)
+
+### Hallazgo colateral: divergencia `docker-compose.yml` local vs prod
+
+Se detectaron diferencias importantes entre el compose local y el de producción. El de producción tiene todos los puertos críticos bindeados a `127.0.0.1` (fruto del trabajo de Dante del 14-abril), mientras que el local los expone a `0.0.0.0`. Además, el de producción tiene env vars Gmail (`DEMO_GMAIL_USER`, `DEMO_GMAIL_PASSWORD`) y `DEMO_RESET_MINUTES=1440` que el local no tiene.
+
+**Regla inmutable**: nunca copiar el compose local a producción sin diff previo aprobado. Reabriría los 9 puertos cerrados y borraría env vars que se agregaron para fixes específicos.
+
+---
+
+## 2026-04-15 — Hardening AWS sprint inicio (QW1 MFA + QW2 IAM user)
+
+### Contexto
+Continuación del sprint iniciado por Dante Anelli (14-abril: 13 puntos de auditoría, 9 puertos cerrados a 127.0.0.1). Objetivo: alcanzar postura mínima defendible en AWS.
+
+### QW1 — MFA en root AWS ✅
+Ya estaba configurado (Authapp, marzo 2026). Confirmado: root con cero access keys activas. Postura correcta verificada.
+
+### QW2 — IAM user separado para deploys ✅
+
+Usuario creado:
+```
+Nombre: flexpqr-deploy
+ARN:    arn:aws:iam::336457597619:user/flexpqr-deploy
+Tags:   Project=FlexPQR, Env=Production
+```
+
+Policies attached (primera pasada, deuda técnica DT-3 para migrar a custom):
+- AmazonEC2FullAccess
+- AmazonS3FullAccess
+- CloudWatchFullAccess
+
+Access Key generada para CLI, profile configurado con `aws configure --profile flexpqr-deploy` (región `sa-east-1`). Verificado con `aws sts get-caller-identity`.
+
+### Problemas encontrados y resueltos
+
+1. **Variables de entorno AWS_* viejas pisaban el `--profile`**: el shell de WSL tenía `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY` de sesiones previas; las env vars ganan al `--profile` en la precedencia del AWS CLI. Fix: `unset AWS_*` antes de usar el profile.
+
+2. **Access Key ID y Secret eran el mismo string**: error de copy-paste al configurar el profile. Fix: regenerar la Access Key en consola, copiar ID y Secret por separado, repetir `aws configure`.
+
+3. **Credenciales de consola (email+password) confundidas con Access Keys**: conceptualmente son dos cosas distintas. Consola web → email+password+MFA. CLI/SDK → Access Key ID (empieza con `AKIA`) + Secret. Aclarado.
+
+### Lecciones técnicas permanentes
+
+- Nunca crear access keys para root. Todo acceso programático vía IAM users con scoped permissions.
+- Antes de debuggear credenciales AWS, correr `env | grep AWS_` y limpiar con `unset`.
+- Después de `aws configure`, siempre verificar con `aws sts get-caller-identity --profile <nombre>`.
+- `AKIA...` = Access Key ID. Un email no lo es.
+
+Ver documento detallado: `fixes/HARDENING_AWS_ABRIL_2026.md`.
+
+---
+
 ## 2026-04-14 — Fix FirmaModal demo tenant + DEMO_RESET_MINUTES
 
 ### Contexto
