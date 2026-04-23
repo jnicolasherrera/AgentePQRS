@@ -304,3 +304,52 @@ Adicionalmente, UUIDs productivos de FlexFintech y Cliente2 en `04_multi_tenant_
 **Deadline:** dentro de 14 días desde fin de DT-20.
 
 **Responsable:** Nico.
+
+---
+
+### DT-25 — Backend no expone `/health` (ni staging ni posiblemente prod)
+
+**Origen:** verificación de restart del backend_v2 en staging (2026-04-23). `GET /health` → 404. La ruta canónica actual es `GET /` → `{"status":"ok","message":"FlexPQR API está VIVO."}`.
+
+**Severidad:** Baja. No bloqueante, pero afecta convenciones de monitoring externo (Cloudwatch, uptime probes, etc.).
+
+**Plan:**
+1. Verificar si el mismo 404 ocurre en prod (curl `http://18.228.54.9:8001/health` cuando se autorice).
+2. Si ambos ambientes comparten el gap, agregar endpoint `/health` al backend FastAPI con response `{"status":"ok"}` + chequeo básico de DB (SELECT 1).
+3. **Impacto inmediato en sprint:** los smoke tests del Agente 4 deben usar `GET /` (o endpoint conocido con DB-touch como `/api/v2/casos`), no `/health`.
+
+**Responsable:** Agente 2 (backend) o Agente 6 (infra) en Sesión 3; queda como tarea paralela sin bloquear el sprint.
+
+---
+
+### DT-26 — Kafka no existe como container en staging
+
+**Origen:** `docker compose ps` en staging no lista ningún container Kafka. Backend loggea "Kafka no disponible — API arranca sin producer" al boot.
+
+**Severidad:** Media. No rompe runtime del backend (arranca en modo degradado). Rompe tests E2E que dependan del pipeline completo worker_ai_consumer → Kafka → consumer.
+
+**Impacto en sprint Tutelas:**
+- Agente 3 (AI/Worker) debe producir eventos al pipeline. Si esos eventos usan Kafka, no se puede probar E2E contra staging.
+- Agente 4 (QA) debe mockear la capa Kafka o usar in-memory producer/consumer fixture.
+
+**Plan:**
+1. Decidir: ¿agregar Kafka como container al `docker-compose.yml` de staging o mockearlo con in-memory?
+2. Si se mockea: documentar el fixture en tests del Agente 3 + Agente 4.
+3. Si se agrega: ventana de infra + pruebas pre-sprint.
+
+**Responsable:** Nico + Agente 3/4 al llegar a Sesión 2/3.
+
+---
+
+### DT-27 — SQLs legacy en raíz del repo subsumidas por el baseline
+
+**Origen:** `01_schema_v2.sql ... 08_plantillas_schema.sql` siguen en la raíz del repo. Fueron las SQLs históricas antes de la 14. El baseline `migrations/00_baseline_schema.sql` (pg_dump schema-only de prod) las subsume completamente y además corrige gaps (agrega columnas productivas que las legacy no cubrían).
+
+**Severidad:** Baja. No rompe nada — `migrate.sh` no las toca (lee solo `migrations/`). Pero confunden: un lector nuevo puede creer que son el pipeline activo.
+
+**Plan (housekeeping, no bloqueante):**
+1. `git mv` de las 6 SQLs a `migrations/legacy/`.
+2. README corto en `migrations/legacy/README.md` explicando que son el historial antes del baseline y que no deben aplicarse.
+3. Un commit `chore(migrations): archivar SQLs legacy bajo migrations/legacy/`.
+
+**Responsable:** puede hacerse en cualquier sprint como tarea puntual. No bloquea tutelas.
