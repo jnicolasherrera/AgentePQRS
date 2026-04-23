@@ -40,33 +40,34 @@
 
 **Decisión pendiente de Nico:** ruta de reconciliación staging vs prod antes de continuar.
 
-### Gate 0.5 Sub-B: `migrations/` + `scripts/migrate.sh` + bootstrap
-- [ ] Crear directorio `migrations/`
-- [ ] `git mv` de 01, 02, 03, 04, 05, 08 de raíz + 14 de `aequitas_infrastructure/database/`
-- [ ] Commit `chore(migrations): consolidar SQLs historicos en directorio migrations`
-- [ ] Escribir `scripts/migrate.sh` con advisory lock + tabla `aequitas_migrations` + flags
-- [ ] Commit `feat(scripts): migrate.sh runner idempotente con advisory lock`
-- [ ] Dry-run staging verificado
-- [ ] Bootstrap según escenario D3
-- [ ] Commit `chore(db): bootstrap registro aequitas_migrations en staging`
-- [ ] Verificación final (dry-run muestra todas aplicadas)
+### Gate 0.5 Sub-B: `migrations/` + `scripts/migrate.sh` + bootstrap — RE-ALCANZADO CON RUTA 1b (pg_dump schema-only)
+- [x] Crear directorio `migrations/` + `migrations/baseline/`
+- [x] Baseline `migrations/baseline/prod_schema_20260423_1600.sql` (pg_dump schema-only autorizado)
+- [x] `migrations/00_baseline_schema.sql` limpiado (subsume legacy 01-05, 08; ver DT-27 para mover legacy)
+- [x] `migrations/14_regimen_sectorial.sql` versión corregida (sin `semaforo_sla` en trigger)
+- [x] `migrations/99_seed_staging.sql` con fixture sintético (2 tenants fake, 8 usuarios, 25 casos)
+- [x] `scripts/migrate.sh` runner idempotente con advisory-lock-por-tabla + guard `99_seed_*` abortando si env≠staging
+- [x] Staging reseteado (`DROP SCHEMA public CASCADE`) + migraciones 00/14/99 aplicadas (id 1-3 en `aequitas_migrations`)
+- [x] Verificación idempotencia — re-run skippea todas
 
-### Agente 1 — DB migraciones 18–21
-- [ ] Diagnóstico obligatorio (columnas, policies, trigger def, doc_hash, config_hash_salt existencia)
-- [ ] Migración 18: CHECK semáforo extendido (NARANJA, NEGRO)
-- [ ] Migración 19: metadata_especifica + columnas tutela + trigger respeta fecha_vencimiento
-- [ ] Migración 20: user_capabilities + RLS + grants default ARC
-- [ ] Migración 21: tutelas_view materializada
-- [ ] Aplicar vía `migrate.sh` (dry-run + real + idempotencia)
-- [ ] Validación post-ejecución (constraint, policies, ARC intacto, grants)
-- [ ] Test crítico del trigger en BEGIN/ROLLBACK
-- [ ] Verificar que ARC sigue operando (count casos, smoke SSE/curl)
-- [ ] Commits atómicos por migración
-- [ ] Push a origin/develop
+> La "ruta SQLs 01-05+08" original de Sub-B fue reemplazada por baseline pg_dump tras detectarse drift repo↔prod (ver `SPRINT_TUTELAS_S123_BLOQUEANTE_DRIFT_REPO.md`). Las SQLs legacy quedan intactas en raíz; mover a `migrations/legacy/` es DT-27 (housekeeping no bloqueante).
+
+### Agente 1 — DB migraciones 18–21 — ✅ COMPLETADO 2026-04-23
+- [x] Diagnóstico obligatorio: `SPRINT_TUTELAS_S123_AG1_DIAGNOSTICO.md`. Gaps detectados (semaforo_sla ausente, fecha_creacion inexistente) y resueltos con Nico.
+- [x] Migración 18: CHECK semáforo extendido + ADD COLUMN semaforo_sla DEFAULT 'VERDE' (commit `4b142c1`).
+- [x] Migración 19: metadata_especifica JSONB + columnas tutela + doc_hash + config_hash_salt + índices GIN + trigger híbrido respetando `fecha_vencimiento` entrante, con capa CALENDARIO y fallback SP usando `NEW.fecha_recibido` (commit `de30d0d`).
+- [x] Migración 20: `user_capabilities` con RLS + grants default ARC (`CAN_SIGN_DOCUMENT` y `CAN_APPROVE_RESPONSE` scope TUTELA). 8 grants aplicados en staging (commit `47f5684`).
+- [x] Migración 21: MATERIALIZED VIEW `tutelas_view` polimórfica + 3 índices + COMMENT de advertencia RLS (commit `9f2a73e`).
+- [x] Aplicación vía `migrate.sh`: dry-run → real → idempotencia (re-run 0 aplicadas/7 skipped).
+- [x] Validación estructural P7: 6 columnas nuevas, CHECK 5 valores, salt 64 hex en 2 tenants, 10 índices, RLS activo user_capabilities, grants 8, ARC 25 casos, tutelas_view 5 filas, trigger usando `fecha_recibido`.
+- [x] Test crítico del trigger P8 con 4 tests A/B/C/D en BEGIN/ROLLBACK, todos ✓ (matriz en `SPRINT_TUTELAS_S123_AG1_APLICACION.md`).
+- [x] Verificar ARC operando P9 (25 casos intactos, capabilities 4/4, vista 5, HTTP 200 en `/`).
+- [x] Commits atómicos: 4b142c1, de30d0d, 47f5684, 9f2a73e.
+- [x] Push a origin/develop confirmado.
 
 ### Cierre Sesión 1
-- [ ] PROGRESS.md actualizado con timestamps
-- [ ] Reporte checkpoint a Nico (escenario D3, migraciones, tests trigger, anomalías)
+- [x] PROGRESS.md actualizado con timestamps
+- [ ] Reporte checkpoint a Nico
 - [ ] PAUSA — esperar green-light Sesión 2
 
 ---
@@ -102,5 +103,18 @@
 
 ## Timestamps
 
-- Inicio Sesión 1: _pendiente_
-- Cierre Sesión 1: _pendiente_
+- Inicio Sesión 1: 2026-04-23 (diagnóstico D3 + reconstrucción staging + Agente 1)
+- Cierre Sesión 1: 2026-04-23 19:07 UTC (tras aplicar 18-21 y validar los 4 tests trigger)
+
+## Anomalías / hallazgos de Sesión 1 (resumen)
+
+| Código | Descripción | Resolución |
+|---|---|---|
+| A1 | Staging esqueleto no reflejaba prod | Reconstruido con baseline pg_dump schema-only (Opción 1b, ruta Y) |
+| Drift repo↔prod | 14 cols de pqrs_casos no venían de SQLs del repo | Baseline 00_baseline_schema.sql subsume las legacy |
+| 14 con `semaforo_sla` fantasma | Trigger referenciaba columna ausente | Fix en `migrations/14_regimen_sectorial.sql` (removida la asignación) + columna creada por la 18 |
+| Trigger con `fecha_creacion` | Columna inexistente | Reemplazado por `fecha_recibido` (consistente con trigger vigente) |
+| UUIDs productivos en 04/05 legacy | Credenciales Zoho en git | DT-20 (rotación, deadline 2026-04-30) + DT-21 (purga git history) |
+| `/health` ausente | Backend expone `/`, no `/health` | DT-25 (agregar endpoint formal) |
+| Kafka sin container en staging | Backend arranca sin producer | DT-26 (decidir mock vs contenedor) |
+| SQLs legacy en raíz | Confusión con baseline | DT-27 (mover a `migrations/legacy/`) |
