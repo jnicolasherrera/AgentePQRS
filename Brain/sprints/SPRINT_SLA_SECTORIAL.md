@@ -70,18 +70,24 @@ Brecha crítica #1 del análisis Bancolombia.
 
 | Entorno | Estado | Fecha |
 |---------|--------|-------|
-| Staging 18.228.54.9 | APLICADO | 8 abril 2026 |
-| Staging 15.229.114.148 | APLICADO | 8 abril 2026 |
-| Producción | PENDIENTE | Requiere aprobación |
+| PROD 18.228.54.9 | **PENDIENTE** (deploy en sprint aparte post-tutelas) | — |
+| Staging 15.229.114.148 (esqueleto original) | APLICADO sobre schema incompleto | 8 abril 2026 |
+| Staging 15.229.114.148 (reconstruido con baseline) | APLICADO limpio | 23 abril 2026 |
+
+> **Corrección documental (2026-04-23):** La versión previa de esta tabla decía "Staging 18.228.54.9 APLICADO 8 abril 2026". Esa línea contenía dos errores:
+>
+> 1. **18.228.54.9 es PRODUCCIÓN**, no staging. El host de staging es 15.229.114.148.
+> 2. **La migración 14 nunca corrió en prod** — verificado en sesión del 23-abr-2026 con `to_regclass('festivos_colombia') = f` y ausencia del SP `calcular_fecha_vencimiento`.
+>
+> Ver `Brain/sprints/SPRINT_TUTELAS_S123_ANALISIS_DRIFT.md` para el análisis completo del drift y `Brain/sprints/SPRINT_TUTELAS_S123_STAGING_REBUILD.md` para la reconstrucción de staging con baseline.
 
 **NOTA**: Tenant arcsas.com.co permanece en GENERAL — no afectado.
 
-## Para deployar a producción
-1. Merge develop → main (ya tiene los commits)
-2. `git pull origin main` en servidor
-3. Aplicar migración:
-   ```bash
-   docker exec -i pqrs_v2_db psql -U pqrs_admin -d pqrs_v2 \
-     < ~/PQRS_V2/aequitas_infrastructure/database/14_regimen_sectorial.sql
-   ```
-4. Rebuild backend: `docker compose up -d --build backend_v2`
+## Para deployar a producción (cuando se autorice — sprint separado post-tutelas)
+
+1. **Usar `migrations/14_regimen_sectorial.sql`, NO** `aequitas_infrastructure/database/14_regimen_sectorial.sql`. La versión de `migrations/` remueve la asignación `NEW.semaforo_sla := 'VERDE'` que rompería el trigger al primer INSERT (columna inexistente en prod). Ver `Brain/sprints/SPRINT_TUTELAS_S123_BLOQUEANTE_DRIFT_REPO.md` §Bloqueante 2.
+2. Backup pre-deploy: `docker exec pqrs_v2_db pg_dump -F c pqrs_v2 > backup.dump`.
+3. Ventana + aprobación explícita.
+4. Aplicar con `./scripts/migrate.sh --env=prod` (agregar flag `--confirm-prod` si se incorpora posteriormente).
+5. Verificación post-deploy: `to_regclass('festivos_colombia')`, `to_regclass('sla_regimen_config')`, columna `regimen_sla`, SP, trigger.
+6. Rebuild backend: `docker compose up -d --build backend_v2`.

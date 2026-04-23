@@ -19,7 +19,7 @@ La migración `aequitas_infrastructure/database/14_regimen_sectorial.sql` (169 l
 
 Ninguna existe en `pqrs_v2` hoy (verificado 2026-04-13 via `information_schema`).
 
-> **Nota de inconsistencia documental (16-abril-2026)**: `sprints/SPRINT_SLA_SECTORIAL.md` dice que el sprint se aplicó a "Staging 18.228.54.9" el 8-abril, pero esa IP es **producción**, no staging (staging real es `15.229.114.148`). Resolver en sesión dedicada: o el sprint se aplicó a staging `15.229.114.148` y el documento tiene un typo, o el sprint sí se aplicó a prod `18.228.54.9` y entonces el estado de esta deuda está mal descrito. Verificar con `information_schema` cuál es el estado real hoy antes de cualquier deploy.
+> **Nota de inconsistencia documental — RESUELTA 2026-04-23**: La versión previa de este texto decía: "SPRINT_SLA_SECTORIAL.md dice que el sprint se aplicó a 'Staging 18.228.54.9' el 8-abril, pero esa IP es producción. Resolver en sesión dedicada". La sesión dedicada ocurrió el 2026-04-23 dentro del sprint Tutelas (ver `Brain/sprints/SPRINT_TUTELAS_S123_ANALISIS_DRIFT.md`). Resultado: 18.228.54.9 es prod y **la migración 14 nunca corrió ahí** (verificado con `to_regclass('festivos_colombia')=f`, SP ausente, trigger ausente). `SPRINT_SLA_SECTORIAL.md` fue corregido en el mismo sprint. La deuda principal (aplicar 14 a prod) sigue viva; ver "Plan de deploy futuro" más abajo.
 
 ### Endpoints afectados (en disco, NO en runtime)
 
@@ -236,3 +236,71 @@ Durante la sesión de hardening aparecieron logs mostrando credenciales activas.
 | Credenciales MinIO `adminminio/adminpassword` | Object storage | Media (ya eran conocidas) |
 
 Patrón de rotación sin downtime documentado en `fixes/HARDENING_AWS_ABRIL_2026.md`.
+
+---
+
+## 2026-04-23 — Deudas descubiertas durante sprint Tutelas S1+S2+S3
+
+### DT-19 — Drift detection periódico staging vs prod vs repo
+
+**Origen:** sesión del 2026-04-23 detectó drift severo entre 3 fuentes (prod 18.228, staging 15.229, SQLs del repo). Ver `Brain/sprints/SPRINT_TUTELAS_S123_BLOQUEANTE_DRIFT_REPO.md`.
+
+**Severidad:** Media — no bloqueante mientras nadie deploye, pero se van acumulando cambios silenciosos cada vez que alguien toca prod directo.
+
+**Propuesta:** cron semestral (o por sprint relevante) que:
+1. Ejecuta `pg_dump --schema-only` contra prod y staging.
+2. Compara con el baseline vigente en `migrations/baseline/`.
+3. Alerta por Slack/email si detecta divergencias, con diff resumido.
+
+**Baseline de referencia:** `migrations/baseline/prod_schema_20260423_1600.sql` (SHA256 `3d0bc89fd69b35819842f3e0db9eacf587cc4935cfce9bf031af339a17c14044`).
+
+**Responsable propuesto:** Nico + agente de mantenimiento.
+
+---
+
+### DT-20 — Rotación de credenciales productivas ARC expuestas en repo
+
+**Origen:** `05_multi_provider_buzones.sql` (y su copia histórica en main) contiene hard-coded los siguientes secretos productivos de ARC (`effca814-...`):
+
+| Secreto | Dónde |
+|---|---|
+| `azure_client_id` | línea 29 |
+| `azure_client_secret` | línea 30 |
+| `zoho_refresh_token` | línea 31 |
+| `zoho_account_id` | línea 32 |
+
+Adicionalmente, UUIDs productivos de FlexFintech y Cliente2 en `04_multi_tenant_config_v2.sql`.
+
+**Severidad:** Alta por cumplimiento. Baja por superficie real (repo privado, 1 owner). Nico decidió: **no bloquea el sprint Tutelas; ventana de 7 días para rotar.**
+
+**Plan:**
+1. Rotar en Zoho el refresh_token (`1000.1b69662a184a373bc3171bb906733499...`).
+2. Rotar en Azure Portal el client_secret (`568f75dac62845e5d8e4caff0deef488c2896803cd`).
+3. Actualizar `.env` de prod con nuevos valores.
+4. Verificar que buzón ARC sigue sincronizando con las nuevas credenciales.
+5. Una vez confirmada rotación, avanzar a DT-21 (purga historia git).
+
+**Deadline:** 2026-04-30 (7 días desde 2026-04-23).
+
+**Responsable:** Nico.
+
+---
+
+### DT-21 — Purga de credenciales en historia git (`filter-repo`)
+
+**Depende de:** DT-20 completada.
+
+**Origen:** Las credenciales expuestas en `05_multi_provider_buzones.sql` (rotadas en DT-20) siguen vivas en la historia git de los commits que introdujeron ese archivo. Aunque el repo sea privado, si alguna vez pasa a público o es forkeado, quedan indexables.
+
+**Severidad:** Media una vez rotadas las credenciales (son válidas como trazabilidad de incidente, no como keys activas). Alta si DT-20 no se completa primero.
+
+**Plan:**
+1. Confirmar que DT-20 terminó (credenciales rotadas, sistema verificado).
+2. Usar `git filter-repo --replace-text` para reemplazar los 4 secretos específicos por `REDACTED_2026_04_23`.
+3. Force-push coordinado con Nico (único colaborador) sobre `main` y `develop`.
+4. Todos los clones locales de Nico deben re-clonarse. Ningún tercero debe tener clones.
+5. Rotar deploy keys de GitHub si existen.
+
+**Deadline:** dentro de 14 días desde fin de DT-20.
+
+**Responsable:** Nico.
