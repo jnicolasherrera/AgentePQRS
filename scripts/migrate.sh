@@ -192,7 +192,7 @@ for file in "${FILES[@]}"; do
 
   if already_applied "$basename"; then
     echo "  ✓ ya aplicada: $basename"
-    ((SKIPPED++))
+    SKIPPED=$((SKIPPED + 1))
     continue
   fi
 
@@ -205,7 +205,7 @@ for file in "${FILES[@]}"; do
   if psql_exec "$file"; then
     register_migration "$basename" "$sha256"
     echo "    ✓ registrada"
-    ((APPLIED++))
+    APPLIED=$((APPLIED + 1))
   else
     echo "    ✗ ERROR aplicando $basename — abortando" >&2
     exit 5
