@@ -15,7 +15,7 @@ import redis.asyncio as redis
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
 from app.services.ai_classifier import classify_email_event, PoisonPillError
-from app.services.db_inserter import insert_pqrs_caso
+from app.services.pipeline import process_classified_event
 
 logging.basicConfig(
     level=logging.INFO,
@@ -72,8 +72,11 @@ async def _process_message(
         # Clasificación IA — retry exponencial interno manejado por classify_email_event
         result = await classify_email_event(event)
 
-        # Persistencia como aequitas_worker (BYPASSRLS) — sin tocar políticas RLS
-        caso_id = await insert_pqrs_caso(event, result, pool)
+        # Pipeline unificado post-clasificación: enrich + SLA python (tutelas) + INSERT + vinculación.
+        async with pool.acquire() as conn:
+            caso_id = await process_classified_event(
+                result, event, uuid.UUID(tenant_id), conn, pool,
+            )
 
         notification = {
             "tipo": "nuevo_caso",

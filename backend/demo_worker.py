@@ -16,6 +16,8 @@ from email.utils import parsedate_to_datetime, parseaddr
 from email.header import decode_header, make_header
 
 from app.services.ai_engine import clasificar_hibrido
+from app.services.ai_classifier import ClassificationResult
+from app.services.pipeline import process_classified_event
 from app.services.plantilla_engine import generar_borrador_para_caso
 from app.services.clasificador import parece_pqrs
 from app.services.storage_engine import upload_file as upload_to_minio, client as minio_client, BUCKET_NAME as MINIO_BUCKET
@@ -385,6 +387,8 @@ async def demo_worker():
     logger.info(f"🎯 [DEMO WORKER] Iniciando — bandeja: {GMAIL_USER} | reset: {RESET_MINUTES} min")
     r    = redis.from_url(REDIS_URL, decode_responses=True)
     conn = await asyncpg.connect(DATABASE_URL)
+    # Pool mínimo requerido por el pipeline unificado (db_inserter hace pool.acquire()).
+    pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=2)
 
     while True:
         try:
@@ -408,26 +412,38 @@ async def demo_worker():
                     logger.info(f"Descartado [{resultado.tipo.value}]: {em['subject'][:60]}")
                     continue
 
-                fecha_venc = em["date"] + timedelta(days=resultado.plazo_dias)
+                # Pre-check dedup por message_id (semántica del ON CONFLICT previo).
+                ext_id = em["message_id"]
+                if ext_id:
+                    dup = await conn.fetchval(
+                        "SELECT 1 FROM pqrs_casos WHERE cliente_id = $1 AND external_msg_id = $2 LIMIT 1",
+                        DEMO_TENANT_ID, ext_id,
+                    )
+                    if dup:
+                        continue
 
-                db_id = await conn.fetchval(
-                    """INSERT INTO pqrs_casos
-                           (cliente_id, email_origen, asunto, cuerpo, estado, nivel_prioridad,
-                            fecha_recibido, tipo_caso, fecha_vencimiento, external_msg_id)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-                       ON CONFLICT (cliente_id, external_msg_id)
-                           WHERE external_msg_id IS NOT NULL DO NOTHING
-                       RETURNING id""",
-                    DEMO_TENANT_ID,
-                    em["sender"],
-                    em["subject"],
-                    em["body"][:8000],
-                    "ABIERTO",
-                    resultado.prioridad.value,
-                    em["date"],
-                    resultado.tipo.value,
-                    fecha_venc,
-                    em["message_id"],
+                # Adapter: ResultadoClasificacion → ClassificationResult + event dict.
+                clasif = ClassificationResult(
+                    tipo_caso=resultado.tipo.value,
+                    prioridad=resultado.prioridad.value,
+                    plazo_dias=resultado.plazo_dias,
+                    cedula=resultado.cedula,
+                    nombre_cliente=resultado.nombre_cliente,
+                    es_juzgado=resultado.es_juzgado,
+                    confianza=resultado.confianza,
+                    borrador=None,
+                )
+                event_dict = {
+                    "tenant_id": str(DEMO_TENANT_ID),
+                    "correlation_id": str(uuid.uuid4()),
+                    "subject": em["subject"],
+                    "body": em["body"][:8000],
+                    "sender": em["sender"],
+                    "date": em["date"].isoformat() if hasattr(em["date"], "isoformat") else em["date"],
+                    "external_msg_id": ext_id,
+                }
+                db_id = await process_classified_event(
+                    clasif, event_dict, DEMO_TENANT_ID, conn, pool,
                 )
 
                 if db_id:

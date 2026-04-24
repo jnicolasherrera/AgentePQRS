@@ -26,6 +26,8 @@ AZURE_CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET")
 AZURE_TENANT_ID = "f765bba0-7d35-4248-9711-5770de77ab2b"
 
 from app.services.ai_engine import clasificar_hibrido
+from app.services.ai_classifier import ClassificationResult
+from app.services.pipeline import process_classified_event
 from app.services.storage_engine import upload_file as upload_to_minio
 from app.services.zoho_engine import ZohoServiceV2
 from app.services.sharepoint_engine import SharePointEngineV2
@@ -145,6 +147,9 @@ async def master_worker():
     logger.info("🚀 [MASTER WORKER V2.1] Híbrido: Outlook/Zoho + SharePoint Storage...")
     r = redis.from_url(REDIS_URL, decode_responses=True)
     conn = await asyncpg.connect(DATABASE_URL)
+    # Pool mínimo para el pipeline unificado (process_classified_event → db_inserter
+    # hace `async with pool.acquire() as _`). Conexión de trabajo principal es `conn`.
+    pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=2)
     outlook = MultiTenantOutlookListener()
 
     while True:
@@ -228,31 +233,44 @@ async def master_worker():
                     dt = pd.to_datetime(em['date']).to_pydatetime()
                     if dt.tzinfo is None:
                         dt = dt.replace(tzinfo=_tz.utc)
-                    venc = (pd.Timestamp(dt).tz_convert('UTC') + pd.offsets.CustomBusinessDay(n=resultado.plazo_dias)).to_pydatetime()
-                    
-                    # Round-robin: obtener analistas activos del tenant
-                    analistas = await conn.fetch(
-                        "SELECT id FROM usuarios WHERE cliente_id = $1 AND rol IN ('analista', 'abogado') AND is_active = TRUE ORDER BY created_at ASC",
-                        c_id
-                    )
-                    asignado_a = None
-                    fecha_asignacion = None
-                    if analistas:
-                        rr_key = f"rr:{c_id}"
-                        idx = int(await r.incr(rr_key)) - 1
-                        asignado_a = analistas[idx % len(analistas)]['id']
-                        fecha_asignacion = dt
 
-                    db_id = await conn.fetchval(
-                        """INSERT INTO pqrs_casos (cliente_id, email_origen, asunto, cuerpo, estado, nivel_prioridad, fecha_recibido, tipo_caso, fecha_vencimiento, external_msg_id, asignado_a, fecha_asignacion)
-                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-                           ON CONFLICT (cliente_id, external_msg_id) WHERE external_msg_id IS NOT NULL DO NOTHING
-                           RETURNING id""",
-                        c_id, em['sender'], em['subject'], em['body'], 'ABIERTO', resultado.prioridad.value, dt, resultado.tipo.value, venc, (em['id'] or '').strip() or None, asignado_a, fecha_asignacion
+                    # Pre-check de dedup por external_msg_id (preserva la semántica
+                    # del ON CONFLICT que tenía el INSERT manual; db_inserter aún
+                    # no implementa esta cláusula UNIQUE).
+                    ext_id = (em['id'] or '').strip() or None
+                    if ext_id:
+                        dup = await conn.fetchval(
+                            "SELECT 1 FROM pqrs_casos WHERE cliente_id = $1 AND external_msg_id = $2 LIMIT 1",
+                            c_id, ext_id,
+                        )
+                        if dup:
+                            logger.info(f"⏭️  Email ya procesado, ignorando: {em['id'][:20]}")
+                            continue
+
+                    # Adapter: ResultadoClasificacion → ClassificationResult (contrato del pipeline).
+                    clasif = ClassificationResult(
+                        tipo_caso=resultado.tipo.value,
+                        prioridad=resultado.prioridad.value,
+                        plazo_dias=resultado.plazo_dias,
+                        cedula=resultado.cedula,
+                        nombre_cliente=resultado.nombre_cliente,
+                        es_juzgado=resultado.es_juzgado,
+                        confianza=resultado.confianza,
+                        borrador=None,
                     )
-                    if not db_id:
-                        logger.info(f"⏭️  Email ya procesado, ignorando: {em['id'][:20]}")
-                        continue
+                    # Event dict compatible con db_inserter.
+                    event_dict = {
+                        "tenant_id": str(c_id),
+                        "correlation_id": str(_uuid.uuid4()),
+                        "subject": em['subject'],
+                        "body": em['body'],
+                        "sender": em['sender'],
+                        "date": dt.isoformat(),
+                        "external_msg_id": ext_id,
+                    }
+                    db_id = await process_classified_event(
+                        clasif, event_dict, c_id, conn, pool,
+                    )
 
                     # Acuse de recibo solo para Abogados Recovery (excluye tutelas)
                     if str(c_id) == TENANT_ABOGADOS_RECOVERY and resultado.tipo.value != "TUTELA":
