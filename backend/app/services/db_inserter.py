@@ -5,10 +5,11 @@ con el rol aequitas_worker (BYPASSRLS). No usa JWT ni get_db_connection de FastA
 El trigger fn_set_fecha_vencimiento() calcula SLA automáticamente en el INSERT.
 El trigger fn_audit_pqrs_casos() registra en logs_auditoria automáticamente.
 """
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import asyncpg
 
@@ -21,6 +22,9 @@ async def insert_pqrs_caso(
     event: dict,
     result: ClassificationResult,
     pool: asyncpg.Pool,
+    *,
+    metadata_especifica: Optional[dict[str, Any]] = None,
+    fecha_vencimiento: Optional[datetime] = None,
 ) -> uuid.UUID:
     """
     Inserta un nuevo caso PQRS en PostgreSQL.
@@ -28,9 +32,24 @@ async def insert_pqrs_caso(
     - Preserva correlation_id del evento Kafka (trazabilidad end-to-end)
     - Popula fecha_recibido para activar el trigger fn_set_fecha_vencimiento (SLA)
     - Retorna el UUID del caso insertado para que el consumer notifique a Redis
+
+    Kwargs opcionales agregados en sprint Tutelas (retrocompat 100%):
+    - metadata_especifica: dict JSON para `pqrs_casos.metadata_especifica`.
+      Si es None, se omite del INSERT y la DB aplica el default '{}'::jsonb.
+    - fecha_vencimiento: datetime para `pqrs_casos.fecha_vencimiento`.
+      Si es None, se omite y el trigger `fn_set_fecha_vencimiento` lo calcula.
+      Si el caller lo setea para tipo_caso != TUTELA, se loguea WARN (el pipeline
+      de tutelas es el único que debería precalcular fecha en Python; los PQRS
+      convencionales deben dejar el cálculo al trigger/SP sectorial).
     """
     tenant_id = uuid.UUID(event["tenant_id"])
     correlation_id = uuid.UUID(event["correlation_id"])
+
+    if fecha_vencimiento is not None and result.tipo_caso != "TUTELA":
+        logger.warning(
+            "fecha_vencimiento precalculada para tipo_caso=%s (no-TUTELA); el trigger usualmente se encarga",
+            result.tipo_caso,
+        )
 
     asunto = event.get("subject", event.get("asunto", "Sin asunto"))[:500]
     cuerpo = (event.get("body", event.get("cuerpo", "")))[:10000]
@@ -43,6 +62,10 @@ async def insert_pqrs_caso(
         analista_id: Optional[uuid.UUID] = await _round_robin_analista(conn, tenant_id)
 
         borrador_estado = "PENDIENTE" if result.borrador else "SIN_PLANTILLA"
+
+        # metadata_especifica: None → usamos {} para respetar semántica del default.
+        # fecha_vencimiento: None → NULL explícito para que el trigger calcule.
+        metadata_payload = json.dumps(metadata_especifica or {})
 
         caso_id: uuid.UUID = await conn.fetchval(
             """
@@ -58,10 +81,13 @@ async def insert_pqrs_caso(
                 asignado_a,
                 borrador_respuesta,
                 borrador_estado,
-                fecha_recibido
+                fecha_recibido,
+                metadata_especifica,
+                fecha_vencimiento
             ) VALUES (
                 $1, $2, $3, $4, $5, $6,
-                'ABIERTO', $7, $8, $9, $10, $11
+                'ABIERTO', $7, $8, $9, $10, $11,
+                $12::jsonb, $13
             ) RETURNING id
             """,
             tenant_id,
@@ -75,6 +101,8 @@ async def insert_pqrs_caso(
             result.borrador,
             borrador_estado,
             fecha_recibido,
+            metadata_payload,
+            fecha_vencimiento,
         )
 
     logger.info(
@@ -119,6 +147,13 @@ def _parse_fecha(raw) -> datetime:
     if isinstance(raw, datetime):
         return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
     if isinstance(raw, str):
+        # Primary: ISO 8601 via stdlib. Maneja "Z" y offsets.
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        # Fallback: pandas si está instalado (formatos raros: RFC 822, etc.).
         try:
             import pandas as pd
             dt = pd.to_datetime(raw).to_pydatetime()
