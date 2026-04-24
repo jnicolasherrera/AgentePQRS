@@ -387,3 +387,22 @@ Adicionalmente, UUIDs productivos de FlexFintech y Cliente2 en `04_multi_tenant_
 
 **Deuda residual futura:**
 - Definir `logging.options.max-size` + `max-file` por default en todos los servicios de `docker-compose.yml` para que ningún container pueda pasar de, p.ej., 500 MB de logs acumulados. Evita recurrencia de este tipo de incidente. No bloqueante del sprint; sugerido como housekeeping del Agente 6 (Infra) en Sesión 3.
+
+---
+
+### DT-29 — `storage_engine` import eager bloquea pytest con conftest global
+
+**Origen:** `backend/tests/conftest.py` importa `app.main`, que importa todas las rutas, que importan `app.services.storage_engine`. Ese módulo intenta conectar MinIO **al importarse** (module-level `client`) con 3 reintentos de 30s cada uno. En env local sin MinIO, esto causa que `pytest` se cuelgue ~90s durante `collect`, volviendo impráctico correr la suite rápida.
+
+**Detectado:** 2026-04-24 durante Agente 3 del sprint Tutelas, al correr tests nuevos.
+
+**Severidad:** Baja en prod/staging (MinIO responde). Molesta en dev/CI local donde no hay MinIO.
+
+**Workaround aplicado:** tests del sprint se ejecutan con `pytest --noconftest`. Los 42 tests del Agente 2 + 16 del Agente 3 = 58 tests verdes corren en <2s con esta flag. Los fixtures del conftest global (`test_client`, `mock_db_connection`, etc.) no son necesarios para tests unitarios de servicios.
+
+**Plan:**
+1. Refactorizar `storage_engine.py` para hacer el `client` lazy: conectar al primer uso, no al import.
+2. O, alternativamente, añadir un `conftest.py` local en `tests/services/` que mockee `storage_engine.client` antes de cualquier import de `app.main`.
+3. Opción de mínimo esfuerzo: documentar en `pytest.ini` un marker `no_storage` y un filtro por default que skipee tests que requieren storage.
+
+**Responsable:** Agente 6 (Infra) en Sesión 3, o housekeeping posterior al sprint.

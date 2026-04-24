@@ -88,15 +88,22 @@
 - [x] Bug encontrado y arreglado durante tests: `sumar_horas_habiles` no respetaba el almuerzo (fixed antes del commit). Bug encontrado en `_parse_fecha` (dependencia dura de pandas, fixed).
 - [x] DT-28 registrado: staging al 100% de disco (bloquea `docker exec` nuevos, no runtime).
 
-### Agente 3 — AI/Worker (pendiente)
-- [ ] Diagnóstico de workers + `insert_pqrs_caso` actual.
-- [ ] `enrichers/__init__.py` dispatcher polimórfico.
-- [ ] `enrichers/tutela_extractor.py` con Claude Sonnet + tool use.
-- [ ] Fixtures sintéticos DT-18 con marker `SYNTHETIC_FIXTURE_V1`.
-- [ ] `vinculacion.py` best-effort.
-- [ ] Integración de los 3 workers al pipeline (reemplazar llamadas directas a `insert_pqrs_caso`).
-- [ ] Smoke E2E staging (usar `master_worker_outlook.py` por DT-26 Kafka ausente).
-- [ ] Cierre Sesión 2: reporte + PAUSA.
+### Agente 3 — AI/Worker — ✅ COMPLETADO 2026-04-24
+- [x] Diagnóstico de workers + `insert_pqrs_caso` actual (`SPRINT_TUTELAS_S123_AG3_DIAGNOSTICO.md`).
+- [x] `enrichers/__init__.py` dispatcher polimórfico + auto-registro — commit `0a6f59c`.
+- [x] `enrichers/tutela_extractor.py` con Claude Sonnet + tool_use + TUTELA_SCHEMA + hash documento + fallback — commit `be47e66`.
+- [x] 3 fixtures sintéticos `SYNTHETIC_FIXTURE_V1` (HABILES estándar, ambiguo+medida provisional, FALLO_PRIMERA) — commit `557e6a7`.
+- [x] `vinculacion.py` best-effort con 4 motivos y query cross-tenant-safe — commit `f866dd1`.
+- [x] 3 workers al pipeline (worker_ai_consumer, master_worker_outlook con pool+adapter, demo_worker con pool+adapter) — commit `bba7f67`.
+- [x] Tests unitarios extractor (10) + vinculacion (6) con mocks 100% — commit `dcedec2`.
+- [x] Smoke E2E staging escrito (`test_tutela_pipeline_staging.py`, opt-in RUN_STAGING_SMOKE=1) — mismo commit.
+- [x] Brain: AG3_DIAGNOSTICO + AG3_APLICACION.
+- [x] DT-29 propuesto: refactor `storage_engine` para import lazy (conftest global cuelga en env local sin MinIO).
+
+### Cierre Sesión 2
+- [x] Agente 2 ✅ (9 commits) + Agente 3 ✅ (7 commits) pusheados a origin/develop.
+- [ ] Reporte checkpoint a Nico (smoke real de staging queda opt-in; 42+16 tests verdes en env local con `--noconftest`).
+- [ ] PAUSA — esperar green-light Sesión 3.
 
 ## Sesión 3 — Agentes 4 + 5 + 6 (pendiente de green-light)
 
