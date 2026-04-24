@@ -337,6 +337,8 @@ Adicionalmente, UUIDs productivos de FlexFintech y Cliente2 en `04_multi_tenant_
 2. Si se mockea: documentar el fixture en tests del Agente 3 + Agente 4.
 3. Si se agrega: ventana de infra + pruebas pre-sprint.
 
+**Mitigación aplicada 2026-04-24:** `ai-worker` stopped en staging + servicio ausente del yml (bloque comentado en `docker-compose.yml` con la definición previa como docs). Previene auto-restart del consumer y futura acumulación de logs. Reactivar junto con despliegue de Kafka en staging. Causa raíz del incidente DT-28.
+
 **Responsable:** Nico + Agente 3/4 al llegar a Sesión 2/3.
 
 ---
@@ -353,3 +355,35 @@ Adicionalmente, UUIDs productivos de FlexFintech y Cliente2 en `04_multi_tenant_
 3. Un commit `chore(migrations): archivar SQLs legacy bajo migrations/legacy/`.
 
 **Responsable:** puede hacerse en cualquier sprint como tarea puntual. No bloquea tutelas.
+
+---
+
+### DT-28 — Staging al 100% de disco — RESUELTA 2026-04-24
+
+**Origen:** `df -h /` en staging reportaba 19/19 GB (100%) bloqueando `docker exec` y `scp` nuevos. Detectado durante Agente 2 del sprint Tutelas al intentar correr tests en el container.
+
+**Causa raíz identificada:** container `pqrs_v2-ai-worker-1` (consumer de Kafka) huérfano con `restart: unless-stopped` pero sin definición actual en ningún yml. Estaba en reconnect-loop contra `kafka_v2:29092` (DT-26: Kafka ausente) spameando `aiokafka ERROR Unable connect to node with id 1` a ~10 líneas/segundo. En 3-4 semanas acumuló **6.4 GB** en `/var/lib/docker/containers/<id>/*-json.log`.
+
+**Secuencia de mitigación aplicada (2026-04-24):**
+
+| # | Acción | Recuperado |
+|---|---|---|
+| 1 | `docker builder prune -af` | 0 B (cache vacío) |
+| 2 | `docker container prune -f` (elimina 3 exited: kafka, zookeeper, kafka-init) | 118 KB |
+| 3 | `docker image prune -af` (cascada post-prune libera imágenes kafka/zookeeper) | 535 MB |
+| 4 | `truncate -s 0` del json.log del ai-worker | **6.4 GB** |
+| 5 | `docker update --restart=no` + `docker rm` del container ai-worker | — |
+| 6 | `journalctl --vacuum-size=100M` | 410 MB |
+
+**Estado final:** 19 GB → **11 GB usados** (56%). **7.7 GB recuperados**.
+
+**Volúmenes NO tocados:** los 12 volúmenes de Docker quedan intactos; los 7 huérfanos detectados sumaban <1 MB, no valía el riesgo.
+
+**Imágenes activas NO tocadas:** 3.9 GB legítimos (backend, frontend, workers productivos, postgres, redis, minio, nginx).
+
+**Prevención permanente:**
+- Definición documental (bloque comentado) de `ai-worker` en `docker-compose.yml` explicando por qué está desactivado y cómo reactivarlo cuando Kafka exista. Ver sección "SERVICIO ai-worker DESACTIVADO EN STAGING HASTA DT-26 RESUELTA".
+- `Brain/DEUDAS_PENDIENTES.md#DT-26` actualizada con nota de mitigación cruzada.
+
+**Deuda residual futura:**
+- Definir `logging.options.max-size` + `max-file` por default en todos los servicios de `docker-compose.yml` para que ningún container pueda pasar de, p.ej., 500 MB de logs acumulados. Evita recurrencia de este tipo de incidente. No bloqueante del sprint; sugerido como housekeeping del Agente 6 (Infra) en Sesión 3.

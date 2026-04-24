@@ -172,6 +172,50 @@ services:
       - backend_v2
     restart: unless-stopped
 
+# =====================================================================
+# SERVICIO ai-worker DESACTIVADO EN STAGING HASTA DT-26 RESUELTA
+# =====================================================================
+# Razón: Kafka (kafka_v2) NO está desplegado en staging. El servicio
+# `ai-worker` consume de Kafka; al no encontrarlo, entra en reconnect
+# loop contra un host DNS inexistente y acumula logs exponencialmente.
+#
+# Incidente detectado 2026-04-24: 6.4 GB de logs acumulados en 3 semanas
+# en un container `pqrs_v2-ai-worker-1` que corría con restart policy
+# `unless-stopped` huérfano (definición removida del yml sin remover
+# el container). Docker JSON log saturó el disco al 100%.
+#
+# Mitigación aplicada: container `pqrs_v2-ai-worker-1` detenido y
+# removido; `truncate` del log (-6.4 GB); `journalctl --vacuum-size=100M`
+# (-410 MB); servicio ausente de este yml.
+#
+# Reactivar cuando Kafka esté disponible en staging. Ver
+# Brain/DEUDAS_PENDIENTES.md DT-26 y DT-28.
+#
+# Definición previa (reconstruida a partir de docker inspect del
+# container antiguo) — NO descomentar sin restablecer Kafka primero:
+#
+#   ai-worker:
+#     build:
+#       context: ./backend
+#       dockerfile: Dockerfile
+#     image: pqrs_v2-ai-worker
+#     command: python worker_ai_consumer.py
+#     environment:
+#       - DATABASE_URL=postgresql://pqrs_admin:pg_password@postgres_v2:5432/pqrs_v2
+#       - WORKER_DB_URL=postgresql://aequitas_worker:changeme_worker@postgres_v2:5432/pqrs_v2
+#       - REDIS_URL=redis://:NuSvuOWiQtGWkZleg-zwqUZzs6DewuaK@redis_v2:6379
+#       - KAFKA_BOOTSTRAP_SERVERS=kafka_v2:29092
+#       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+#       - MINIO_ENDPOINT=minio:9000
+#       - MINIO_ACCESS_KEY=adminminio
+#       - MINIO_SECRET_KEY=adminpassword
+#     depends_on:
+#       - postgres_v2
+#       - redis_v2
+#       - kafka_v2
+#     restart: unless-stopped
+# =====================================================================
+
 volumes:
   pg_data:
   redis_data:
