@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 import re
-from typing import Optional
+from typing import Optional, TypedDict
 
 
 # ─────────────────────────────────────────────────────────────
@@ -12,7 +12,16 @@ from typing import Optional
 # La regla NARANJA solo aplica a TUTELA; PQRS_DEFAULT salta de AMARILLO directo
 # a ROJO. NEGRO marca vencido sin respuesta (solo si negro_si_vencido=True; la
 # UI puede usarlo para destacar tutelas vencidas en rojo intenso).
-SEMAFORO_CONFIG: dict[str, dict[str, object]] = {
+class _SemaforoConfig(TypedDict):
+    verde_hasta_pct: float
+    amarillo_hasta_pct: float
+    naranja_hasta_pct: Optional[float]
+    rojo_hasta_pct: float
+    negro_si_vencido: bool
+    escalar_representante_legal_en_rojo: bool
+
+
+SEMAFORO_CONFIG: dict[str, _SemaforoConfig] = {
     "PQRS_DEFAULT": {
         "verde_hasta_pct": 50.0,
         "amarillo_hasta_pct": 20.0,
@@ -71,12 +80,12 @@ def calcular_semaforo(
 
     pct_restante = (tiempo_restante / tiempo_total) * 100
 
-    if pct_restante >= float(config["verde_hasta_pct"]):
+    if pct_restante >= config["verde_hasta_pct"]:
         return "VERDE"
-    if pct_restante >= float(config["amarillo_hasta_pct"]):
+    if pct_restante >= config["amarillo_hasta_pct"]:
         return "AMARILLO"
     naranja_hasta = config.get("naranja_hasta_pct")
-    if naranja_hasta is not None and pct_restante >= float(naranja_hasta):
+    if naranja_hasta is not None and pct_restante >= naranja_hasta:
         return "NARANJA"
     # entre 0 y el threshold restante → ROJO.
     return "ROJO"
