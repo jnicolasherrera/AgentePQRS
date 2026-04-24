@@ -72,11 +72,31 @@
 
 ---
 
-## Sesión 2 — Agentes 2 + 3 (pendiente de green-light)
+## Sesión 2 — Agentes 2 + 3
 
-- [ ] Agente 2: Backend (`sla_engine.py`, `capabilities.py`, `scoring_engine` extendido, `pipeline.py`, `db_inserter.py` extendido, tests ≥80%, mypy clean)
-- [ ] Agente 3: AI/Worker (`enrichers/`, `tutela_extractor.py` con Claude Sonnet, `vinculacion.py`, fixtures sintéticos con marker DT-18, integración 3 workers al pipeline, smoke E2E staging)
-- [ ] Cierre Sesión 2: reporte + PAUSA
+### Agente 2 — Backend — ✅ COMPLETADO 2026-04-24
+- [x] Diagnóstico paso 1: `Brain/sprints/SPRINT_TUTELAS_S123_AG2_DIAGNOSTICO.md`.
+- [x] `sla_engine.py` con `sumar_horas_habiles` (8h/día hábil, salta almuerzo, fds, festivos), `calcular_vencimiento_tutela`, `calcular_vencimiento_medida_provisional` — commit `2105773`.
+- [x] `capabilities.py` con `user_has_capability` (scope NULL cubre), `grant_capability` idempotente, `list_user_capabilities` NULLS FIRST — commit `57530fa`.
+- [x] `scoring_engine.py` extendido con `SEMAFORO_CONFIG` (TypedDict) + `calcular_semaforo` polimórfico — commits `443f915` + fix mypy `2244221`.
+- [x] `pipeline.py` unificador `process_classified_event` con imports diferidos de enrichers/vinculacion — commit `6b3bf9f`.
+- [x] `db_inserter.py` extendido con kwargs `metadata_especifica`/`fecha_vencimiento` + fix `_parse_fecha` (fromisoformat first) — commit `f6a9ca8`.
+- [x] 42 tests pasan (`python3 -m pytest backend/tests/services/`). Commit `9970a26`.
+- [x] mypy clean en los 3 módulos nuevos (`sla_engine`, `capabilities`, `pipeline`); 3 errores preexistentes en `ai_engine.py` documentados.
+- [x] Cobertura: estimada ≥80% por módulo a partir de los casos testeados. Medición formal con `coverage.py` bloqueada localmente por performance; deferida a Agente 4 QA (Sesión 3).
+- [x] Brain doc de aplicación: `SPRINT_TUTELAS_S123_AG2_APLICACION.md` — commit `3a9e564`.
+- [x] Bug encontrado y arreglado durante tests: `sumar_horas_habiles` no respetaba el almuerzo (fixed antes del commit). Bug encontrado en `_parse_fecha` (dependencia dura de pandas, fixed).
+- [x] DT-28 registrado: staging al 100% de disco (bloquea `docker exec` nuevos, no runtime).
+
+### Agente 3 — AI/Worker (pendiente)
+- [ ] Diagnóstico de workers + `insert_pqrs_caso` actual.
+- [ ] `enrichers/__init__.py` dispatcher polimórfico.
+- [ ] `enrichers/tutela_extractor.py` con Claude Sonnet + tool use.
+- [ ] Fixtures sintéticos DT-18 con marker `SYNTHETIC_FIXTURE_V1`.
+- [ ] `vinculacion.py` best-effort.
+- [ ] Integración de los 3 workers al pipeline (reemplazar llamadas directas a `insert_pqrs_caso`).
+- [ ] Smoke E2E staging (usar `master_worker_outlook.py` por DT-26 Kafka ausente).
+- [ ] Cierre Sesión 2: reporte + PAUSA.
 
 ## Sesión 3 — Agentes 4 + 5 + 6 (pendiente de green-light)
 
