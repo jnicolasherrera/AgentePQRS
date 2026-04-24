@@ -1,0 +1,46 @@
+# FIXTURE SINTÉTICO — NO es oficio real. Ver DT-18.
+# Marker: SYNTHETIC_FIXTURE_V1
+# Objetivo: plazo HABILES estándar con patrón "N (N) días hábiles".
+# Expectativa: _confidence.plazo_informe_horas alto (>=0.85) — patrón canónico.
+
+SYNTHETIC_FIXTURE_V1
+
+REPÚBLICA DE COLOMBIA
+RAMA JUDICIAL DEL PODER PÚBLICO
+JUZGADO TRES PENAL MUNICIPAL CON FUNCIÓN DE CONTROL DE GARANTÍAS DE BOGOTÁ D.C.
+
+Referencia: Acción de Tutela
+Expediente: 11001-3103-001-2026-00123-00
+Accionante: Persona ficticia para pruebas
+Accionado: Entidad financiera de prueba
+
+AUTO ADMISORIO DE TUTELA
+Bogotá D.C., veintidós (22) de abril de dos mil veintiséis (2026)
+
+EL JUZGADO TRES PENAL MUNICIPAL CON FUNCIÓN DE CONTROL DE GARANTÍAS DE BOGOTÁ D.C., en uso de sus atribuciones constitucionales y legales, en especial las conferidas por el Decreto 2591 de 1991,
+
+CONSIDERA:
+
+PRIMERO: Que en la fecha fue recibida acción de tutela contra la entidad accionada, invocando la presunta vulneración del derecho fundamental de petición consagrado en el artículo 23 de la Constitución Política, así como el derecho al debido proceso administrativo.
+
+SEGUNDO: Que revisados los requisitos del artículo 14 del Decreto 2591 de 1991, se ADMITE la presente acción y se procede a su trámite.
+
+RESUELVE:
+
+PRIMERO: ADMITIR la acción de tutela de la referencia.
+
+SEGUNDO: NOTIFICAR a la entidad accionada, concediéndole el término de dos (2) días hábiles contados a partir del día siguiente al recibo de la presente comunicación, para que rinda informe sobre los hechos de la tutela y aporte las pruebas que considere pertinentes.
+
+TERCERO: Contra la presente providencia no procede recurso alguno, de conformidad con el artículo 16 del Decreto 2591 de 1991.
+
+NOTIFÍQUESE Y CÚMPLASE
+
+[Firma sintética - fixture de prueba]
+Juez de Control de Garantías
+
+Notas del fixture:
+- Marker: SYNTHETIC_FIXTURE_V1 al inicio del documento.
+- Plazo esperado extraído: plazo_informe_horas=16, plazo_tipo=HABILES (2 días × 8h/día).
+- tipo_actuacion esperado: AUTO_ADMISORIO.
+- Sin medidas provisionales.
+- _confidence.plazo_informe_horas esperado: >=0.85 (patrón "N (N) días hábiles" es estándar).

@@ -1,0 +1,50 @@
+# FIXTURE SINTÉTICO — NO es oficio real. Ver DT-18.
+# Marker: SYNTHETIC_FIXTURE_V1
+# Objetivo: plazo de informe AMBIGUO + medida provisional 24h calendario explícita.
+# Expectativa: _confidence.plazo_informe_horas BAJO (<0.85) + _requiere_revision_humana=True.
+#              medida provisional bien detectada (plazo claro y explícito).
+
+SYNTHETIC_FIXTURE_V1
+
+REPÚBLICA DE COLOMBIA
+RAMA JUDICIAL
+JUZGADO CINCO CIVIL MUNICIPAL DE MEDELLÍN
+
+Referencia: Acción de Tutela con Medida Provisional
+Expediente: 05001-4003-005-2026-00047-00
+Accionante: Persona ficticia para pruebas
+Accionado: Entidad prestadora de salud
+
+AUTO DE ADMISIÓN Y MEDIDA PROVISIONAL
+Medellín, veintitrés (23) de abril de dos mil veintiséis (2026)
+
+En atención a la acción de tutela de la referencia, el despacho estima necesario pronunciarse con la urgencia que el caso amerita dada la presunta vulneración de derechos fundamentales a la vida digna y a la salud.
+
+CONSIDERACIONES:
+
+De conformidad con el artículo 86 de la Constitución Política y el Decreto 2591 de 1991, se procede a admitir la acción y, dada la gravedad del asunto y el inminente perjuicio irremediable, se ordena una medida provisional de protección inmediata.
+
+RESUELVE:
+
+PRIMERO: ADMITIR la acción de tutela.
+
+SEGUNDO: Como MEDIDA PROVISIONAL de protección, se ORDENA a la entidad accionada que, dentro de las veinticuatro (24) horas siguientes a la notificación de la presente providencia, entregue al accionante los medicamentos de alto costo prescritos por su médico tratante.
+
+TERCERO: NOTIFICAR a la entidad accionada para que ejerza su derecho de defensa y presente el correspondiente informe dentro del término legal que le corresponde conforme a la naturaleza de esta acción constitucional.
+
+CUARTO: Contra la presente providencia no procede recurso alguno.
+
+NOTIFÍQUESE Y CÚMPLASE
+
+[Firma sintética - fixture de prueba]
+Juez
+
+Notas del fixture:
+- Marker: SYNTHETIC_FIXTURE_V1.
+- Plazo del informe principal: AMBIGUO ("dentro del término legal que le corresponde").
+  No dice literalmente horas ni días — el extractor debería marcar _confidence bajo
+  para plazo_informe_horas y setear _requiere_revision_humana=True.
+- Medida provisional: 24 horas CALENDARIO ("dentro de las veinticuatro (24) horas").
+  Detección clara esperada.
+- tipo_actuacion esperado: AUTO_ADMISORIO (con flag de medida provisional).
+- derechos_invocados: vida digna, salud.
