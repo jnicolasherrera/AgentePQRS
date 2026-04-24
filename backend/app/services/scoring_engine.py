@@ -1,7 +1,85 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 import re
 from typing import Optional
+
+
+# ─────────────────────────────────────────────────────────────
+# Semáforo SLA (sprint Tutelas)
+# ─────────────────────────────────────────────────────────────
+# Mapa polimórfico por tipo_caso. Valores en % de tiempo restante vs plazo total.
+# La regla NARANJA solo aplica a TUTELA; PQRS_DEFAULT salta de AMARILLO directo
+# a ROJO. NEGRO marca vencido sin respuesta (solo si negro_si_vencido=True; la
+# UI puede usarlo para destacar tutelas vencidas en rojo intenso).
+SEMAFORO_CONFIG: dict[str, dict[str, object]] = {
+    "PQRS_DEFAULT": {
+        "verde_hasta_pct": 50.0,
+        "amarillo_hasta_pct": 20.0,
+        "naranja_hasta_pct": None,       # PQRS no usa NARANJA.
+        "rojo_hasta_pct": 0.0,
+        "negro_si_vencido": False,
+        "escalar_representante_legal_en_rojo": False,
+    },
+    "TUTELA": {
+        "verde_hasta_pct": 50.0,
+        "amarillo_hasta_pct": 25.0,
+        "naranja_hasta_pct": 10.0,
+        "rojo_hasta_pct": 0.0,
+        "negro_si_vencido": True,
+        "escalar_representante_legal_en_rojo": True,
+    },
+}
+
+
+def calcular_semaforo(
+    tipo_caso: str,
+    fecha_creacion: datetime,
+    fecha_vencimiento: datetime,
+    ahora: Optional[datetime] = None,
+) -> str:
+    """
+    Calcula el color de semáforo según el % de tiempo restante relativo al plazo total.
+
+    - Lee SEMAFORO_CONFIG[tipo_caso], con fallback a "PQRS_DEFAULT".
+    - Si ya se venció y `negro_si_vencido` → "NEGRO"; si no → "ROJO".
+    - Para tutelas, aplica NARANJA entre rojo_hasta_pct y naranja_hasta_pct.
+
+    Todos los datetimes se normalizan a UTC.
+    """
+    config = SEMAFORO_CONFIG.get(tipo_caso, SEMAFORO_CONFIG["PQRS_DEFAULT"])
+
+    if ahora is None:
+        ahora = datetime.now(timezone.utc)
+
+    # Normalización a UTC (asume UTC si naive).
+    def _utc(d: datetime) -> datetime:
+        return d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d.astimezone(timezone.utc)
+
+    ahora_utc = _utc(ahora)
+    creacion_utc = _utc(fecha_creacion)
+    vencimiento_utc = _utc(fecha_vencimiento)
+
+    tiempo_total = (vencimiento_utc - creacion_utc).total_seconds()
+    if tiempo_total <= 0:
+        return "NEGRO" if config["negro_si_vencido"] else "ROJO"
+
+    tiempo_restante = (vencimiento_utc - ahora_utc).total_seconds()
+
+    if tiempo_restante <= 0:
+        return "NEGRO" if config["negro_si_vencido"] else "ROJO"
+
+    pct_restante = (tiempo_restante / tiempo_total) * 100
+
+    if pct_restante >= float(config["verde_hasta_pct"]):
+        return "VERDE"
+    if pct_restante >= float(config["amarillo_hasta_pct"]):
+        return "AMARILLO"
+    naranja_hasta = config.get("naranja_hasta_pct")
+    if naranja_hasta is not None and pct_restante >= float(naranja_hasta):
+        return "NARANJA"
+    # entre 0 y el threshold restante → ROJO.
+    return "ROJO"
 
 
 @dataclass(frozen=True)
