@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Clock, Save, Send, ShieldAlert, Mail, MessageSquare, Download, CheckCircle, BrainCircuit, XCircle, UserCheck } from "lucide-react";
 import { api, useAuthStore } from "@/store/authStore";
@@ -23,6 +23,8 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
   const [feedbackDone, setFeedbackDone] = useState(false);
   const [draftText, setDraftText] = useState("");
   const [savingDraft, setSavingDraft] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const lastSavedTextRef = useRef("");
   const [replyFiles, setReplyFiles] = useState<{id: string; nombre: string; tamano: number}[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [showComments, setShowComments] = useState(false);
@@ -43,6 +45,8 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
     setData(null);
     setDraftText("");
     setReplyFiles([]);
+    setAutoSaveStatus("idle");
+    lastSavedTextRef.current = "";
     if (casoId) {
       setLoading(true);
       api.get(`/casos/${casoId}`)
@@ -51,6 +55,7 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
           setLoading(false);
           if (res.data.borrador_respuesta) {
             setDraftText(res.data.borrador_respuesta);
+            lastSavedTextRef.current = res.data.borrador_respuesta;
           }
         })
         .catch(err => {
@@ -59,6 +64,26 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
         });
     }
   }, [casoId]);
+
+  useEffect(() => {
+    if (!data?.id) return;
+    if (!draftText) return;
+    if (draftText === lastSavedTextRef.current) return;
+    setAutoSaveStatus("saving");
+    const handle = setTimeout(async () => {
+      try {
+        await api.put(`/casos/${data.id}/borrador`, { texto: draftText });
+        lastSavedTextRef.current = draftText;
+        setData((prev: any) => prev ? { ...prev, borrador_respuesta: draftText, borrador_estado: "PENDIENTE" } : prev);
+        onStatusChange?.(data.id, { borrador_estado: "PENDIENTE" });
+        setAutoSaveStatus("saved");
+      } catch (e) {
+        console.error("Auto-save falló:", e);
+        setAutoSaveStatus("idle");
+      }
+    }, 2000);
+    return () => clearTimeout(handle);
+  }, [draftText, data?.id, onStatusChange]);
 
   const handleUpdate = async (field: string, value: string) => {
     try {
@@ -158,7 +183,9 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await api.post(`/casos/${data.id}/reply-adjuntos`, formData);
+      const res = await api.post(`/casos/${data.id}/reply-adjuntos`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
       setReplyFiles(prev => [...prev, {
         id: res.data.adjunto_id,
         nombre: res.data.nombre,
@@ -366,7 +393,14 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
                 {/* RIGHT PANE: Draft Response */}
                 <div className="w-1/2 agente agente-col overflow-hidden">
                   <div className="px-6 py-3 border-b border-white/5 bg-white/[0.02] agente items-center justify-between shrink-0">
-                    <h3 className="text-xs font-black text-blue-400 uppercase tracking-widest">Borrador de Respuesta</h3>
+                    <div className="agente items-center gap-3">
+                      <h3 className="text-xs font-black text-blue-400 uppercase tracking-widest">Borrador de Respuesta</h3>
+                      {autoSaveStatus !== "idle" && (
+                        <span className="text-xs text-slate-500 italic">
+                          {autoSaveStatus === "saving" ? "Guardando..." : "✓ Guardado"}
+                        </span>
+                      )}
+                    </div>
                     {hasDraft && (
                       <button
                         onClick={handleGenerate}
