@@ -41,6 +41,15 @@ async def insert_pqrs_caso(
       Si el caller lo setea para tipo_caso != TUTELA, se loguea WARN (el pipeline
       de tutelas es el único que debería precalcular fecha en Python; los PQRS
       convencionales deben dejar el cálculo al trigger/SP sectorial).
+
+    Campos derivados del event/metadata, propagados al INSERT (sprint Tutelas
+    smoke-fix 2026-04-27):
+    - external_msg_id: lee event["external_msg_id"] / "message_id" / "id". Habilita
+      dedup vía idx_casos_external_msg (UNIQUE parcial sobre cliente_id+ext).
+    - documento_peticionante_hash: lee
+      metadata_especifica["accionante"]["documento_hash"] (lo hashea enrich_tutela
+      con el salt del tenant). Llenarlo en columna física habilita la query
+      indexada de vinculacion.vincular_con_pqrs_previo (idx_casos_doc_hash).
     """
     tenant_id = uuid.UUID(event["tenant_id"])
     correlation_id = uuid.UUID(event["correlation_id"])
@@ -57,6 +66,25 @@ async def insert_pqrs_caso(
 
     # Usar fecha del evento si viene, sino NOW() en UTC
     fecha_recibido: datetime = _parse_fecha(event.get("date") or event.get("fecha_recibido"))
+
+    # external_msg_id: identificador del proveedor de email (Outlook Message-Id /
+    # Gmail Message-Id / Kafka external id). Permite dedup vía idx_casos_external_msg
+    # (UNIQUE parcial). NULL si el evento no lo trae.
+    external_msg_id: Optional[str] = (
+        event.get("external_msg_id") or event.get("message_id") or event.get("id") or None
+    )
+    if isinstance(external_msg_id, str):
+        external_msg_id = external_msg_id.strip() or None
+
+    # documento_peticionante_hash: extraído de metadata_especifica.accionante.documento_hash
+    # (lo pone enrich_tutela tras hashear con salt del tenant). Llenarlo en columna física
+    # habilita la query indexada de vinculacion.py (idx_casos_doc_hash).
+    documento_hash: Optional[str] = None
+    accionante = (metadata_especifica or {}).get("accionante")
+    if isinstance(accionante, dict):
+        candidato = accionante.get("documento_hash")
+        if isinstance(candidato, str) and candidato:
+            documento_hash = candidato
 
     async with pool.acquire() as conn:
         analista_id: Optional[uuid.UUID] = await _round_robin_analista(conn, tenant_id)
@@ -83,11 +111,13 @@ async def insert_pqrs_caso(
                 borrador_estado,
                 fecha_recibido,
                 metadata_especifica,
-                fecha_vencimiento
+                fecha_vencimiento,
+                external_msg_id,
+                documento_peticionante_hash
             ) VALUES (
                 $1, $2, $3, $4, $5, $6,
                 'ABIERTO', $7, $8, $9, $10, $11,
-                $12::jsonb, $13
+                $12::jsonb, $13, $14, $15
             ) RETURNING id
             """,
             tenant_id,
@@ -103,6 +133,8 @@ async def insert_pqrs_caso(
             fecha_recibido,
             metadata_payload,
             fecha_vencimiento,
+            external_msg_id,
+            documento_hash,
         )
 
     logger.info(
