@@ -107,12 +107,33 @@
 - [x] Brain: `SPRINT_TUTELAS_S123_SMOKE_E2E.md` con bitácora de los 3 smokes + auditoría + verificaciones SQL.
 - [ ] PAUSA — esperar green-light Sesión 3.
 
-## Sesión 3 — Agentes 4 + 5 + 6 (pendiente de green-light)
+## Sesión 3 — Agentes 4 + 5 + 6
 
-- [ ] Agente 4: QA (tests E2E, multi-tenant, carga, regression ARC)
-- [ ] Agente 5: Docs (Brain sprint, runbooks, DEUDAS, arquitectura, CHANGELOG)
-- [ ] Agente 6: Infra (bind mounts staging, deploy, healthcheck, CloudWatch, rollback doc)
-- [ ] Cierre final: reporte + PAUSA
+### Agente 4 — QA — ✅ COMPLETADO 2026-04-27
+- [x] Diagnóstico baseline: 67 tests sprint base verdes (`tests/services/`).
+- [x] `tests/integration/test_tutela_pipeline_e2e.py` 6 escenarios — commit `6898849`.
+- [x] `test_workers_usan_pipeline.py` 8 tests (lectura textual, sin pandas dep) — commit `3b0e236`.
+- [x] `test_no_regresion_pqrs.py` 12 tests parametrizados — commit `307df69`.
+- [x] `test_tenant_isolation_tutelas.py` 7 tests — commit `5491cc5`.
+- [x] `test_tutelas_burst.py` 3 tests carga liviana con Claude mock — commit `9b225c1`.
+- [x] `test_arc_regression.py` 4 tests opt-in contra staging real → 4/4 PASSED — commit `724fd71`.
+- [x] **Suite total: 103 passed + 4 skipped (ARC opt-in) en 26s.** ARC regression real adicional 4/4 en 2.48s.
+- [x] Cero drift adicional descubierto durante QA.
+- [x] Cero regresiones detectadas en ARC seed.
+
+### Agente 5 — Docs (pendiente)
+- [ ] SPRINT_TUTELAS_S123.md final.
+- [ ] RUNBOOK_TUTELAS.md.
+- [ ] RUNBOOK_MIGRATE_SH.md.
+- [ ] CHANGELOG.md.
+
+### Agente 6 — Infra + Deploy (pendiente)
+- [ ] DT-15 bind mounts staging.
+- [ ] DT-25/26/29 housekeeping.
+- [ ] Deploy staging.
+- [ ] Healthcheck + smoke E2E post-deploy.
+- [ ] CloudWatch metrics nuevas.
+- [ ] Rollback plan.
 
 ---
 
