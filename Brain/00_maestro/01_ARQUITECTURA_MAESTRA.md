@@ -82,11 +82,39 @@ Email (Outlook/Zoho) -> Webhook/Worker -> Kafka (pqrs.raw.emails)
 | nginx_ssl          | 80/443      | Reverse proxy + SSL                      |
 
 
+## Polimorfismo por `tipo_caso` (sprint Tutelas, 2026-04)
+
+El sistema procesa 5 tipos canónicos: `PETICION`, `QUEJA`, `RECLAMO`, `SUGERENCIA`, `SOLICITUD`, `TUTELA` (la tutela tiene su propio tratamiento). Antes del sprint, los 3 workers tenían lógica duplicada de INSERT + cálculo de fecha + asignación. Tras el sprint, todos convergen en un único pipeline polimórfico:
+
+```
+worker → classify → pipeline.process_classified_event:
+                       1. enrich_by_tipo (dispatcher polimórfico)
+                       2. SLA Python (solo TUTELA con metadata) o trigger DB (default)
+                       3. db_inserter.insert_pqrs_caso
+                       4. vinculacion best-effort (solo TUTELA con doc_hash)
+```
+
+**Decisión B2 — SLA coexistencia.** El SP `calcular_fecha_vencimiento` (mig 14, régimen sectorial) sigue siendo el cálculo default vía trigger. Para TUTELA con `metadata.plazo_informe_horas` extraído por Claude, el `sla_engine` Python lo precalcula y el trigger respeta el valor entrante. Defense-in-depth en el trigger híbrido `fn_set_fecha_vencimiento` (3 capas: respeta valor entrante → CALENDARIO calcula `fecha_recibido + N hours` → fallback al SP sectorial).
+
+**Decisión W3 — Pipeline unificador + auto-registro de enrichers.** `enrichers/__init__.py` mantiene `ENRICHERS: dict[str, Enricher]`. Cada enricher se auto-registra al importarse (`ENRICHERS["TUTELA"] = enrich_tutela`). `enrich_by_tipo(tipo_caso, event, clasif)` despacha al enricher correspondiente o devuelve `{}` si no hay registro. Si el enricher lanza, retorna `{"_enrichment_failed": True}` y el pipeline sigue.
+
+**Cómo agregar un nuevo enricher (ej. SALUD):**
+1. Crear `backend/app/services/enrichers/salud_extractor.py` con función `enrich_salud(event, clasif)`.
+2. Al final del módulo: `ENRICHERS["SALUD"] = enrich_salud`.
+3. Agregar `from . import salud_extractor` en `enrichers/__init__.py`.
+4. Definir el schema (estructura de `metadata_especifica` para SALUD) en el docstring.
+5. Si requiere SLA Python específico, extender `sla_engine.calcular_vencimiento_<tipo>`. Si no, el trigger DB con SP sectorial cubre.
+
+**`metadata_especifica` JSONB polimórfico.** Cada `tipo_caso` define su propio shape dentro del campo. Ejemplo TUTELA documentado en [[SPRINT_TUTELAS_S123]]. El INSERT siempre lo trata como `jsonb` opaco — la lógica de schema vive en los enrichers.
+
+**Vista materializada `tutelas_view` polimórfica.** Expone los campos de `metadata_especifica` como columnas planas para que frontend/BI no tengan que parsear JSONB. ⚠️ NO hereda RLS — los consumidores filtran por `cliente_id` explícito. Ver mig 21 + [[RUNBOOK_TUTELAS]].
+
 ## Referencias
 
 - [[00_DIRECTIVAS_CLAUDE_CODE]]
 - [[02_ESTANDARES_CODING]]
 - [[backend_core]]
+- [[SPRINT_TUTELAS_S123]] — sprint de habilitación del polimorfismo.
 - [[frontend_context_sse]]
 - [[infra_docker_kafka_cluster]]
 - [[service_ai_classifier]]
