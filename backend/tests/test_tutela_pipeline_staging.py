@@ -97,7 +97,8 @@ async def test_smoke_pipeline_tutela_staging():
             row = await conn.fetchrow(
                 """
                 SELECT id, tipo_caso, asunto, fecha_vencimiento, metadata_especifica,
-                       external_msg_id
+                       external_msg_id, correlation_id, documento_peticionante_hash,
+                       semaforo_sla
                 FROM pqrs_casos
                 WHERE id = $1
                 """,
@@ -106,12 +107,34 @@ async def test_smoke_pipeline_tutela_staging():
             assert row is not None, "El caso no aparece en DB"
             assert row["tipo_caso"] == "TUTELA"
             assert SMOKE_MARKER in row["asunto"]
+            # Bug 1 (sprint smoke-fix 2026-04-27): external_msg_id debe propagarse.
             assert row["external_msg_id"] == event["external_msg_id"]
-            # fecha_vencimiento debe estar calculada (por trigger o pipeline).
+            # Mig 22: correlation_id debe propagarse.
+            assert str(row["correlation_id"]) == event["correlation_id"]
+            # fecha_vencimiento debe estar calculada (por sla_engine o por trigger).
             assert row["fecha_vencimiento"] is not None, "fecha_vencimiento quedó NULL"
+            # semaforo_sla default 'VERDE' (mig 18).
+            assert row["semaforo_sla"] == "VERDE"
             # metadata_especifica: puede ser {} si no hay API key o extractor falló,
             # o dict con keys si corrió Claude. Ambos son válidos para smoke.
             assert row["metadata_especifica"] is not None
+            # Bug 2 (sprint smoke-fix 2026-04-27): si el extractor extrajo accionante
+            # con documento_hash, la columna física debe estar poblada (habilita
+            # vinculacion.vincular_con_pqrs_previo a encontrar matches por índice).
+            # Si la metadata viene del fallback (sin accionante), queda NULL — ambos
+            # casos son válidos según el resultado de Claude.
+            md = row["metadata_especifica"]
+            if isinstance(md, str):
+                import json
+                md = json.loads(md)
+            accionante_md = (md or {}).get("accionante") if isinstance(md, dict) else None
+            doc_hash_md = (
+                accionante_md.get("documento_hash") if isinstance(accionante_md, dict) else None
+            )
+            if doc_hash_md:
+                assert row["documento_peticionante_hash"] == doc_hash_md, (
+                    "documento_peticionante_hash de la columna física no coincide con metadata"
+                )
 
             print(f"\n[SMOKE OK] caso_id={caso_id}")
             print(f"           tipo={row['tipo_caso']}")
