@@ -140,3 +140,33 @@ Procedimiento:
 - Smoke staging: pendiente.
 - Deploy prod: pendiente (requiere autorización Nico).
 - Validación con Paola: pendiente (post-deploy prod).
+
+---
+
+## Cierre fase A — 2026-04-27 (FINAL)
+
+| Hito | Estado |
+|---|---|
+| 6 commits sprint Paola | ✅ pusheados a `develop` (`45254e6`) |
+| PR #5 rescate `demo_worker.py` (drift 16-abril) | ✅ mergeado en `main` (`ccee23b`) |
+| PR #6 hotfix sprint Paola (cherry-pick desde develop) | ✅ mergeado en `main` (`e2d788e`) |
+| Conflicto cherry-pick `Brain/DEUDAS_PENDIENTES.md` | ✅ resuelto opción B (`--theirs`) |
+| Pre-deploy MinIO prod escritura `pqrs-vault/reply/` | ✅ verificado |
+| Pre-deploy bridge cron prod | ✅ sin alertas |
+| Drift `backend/demo_worker.py` en prod | ✅ alineado con commit rescate (idéntico byte por byte) |
+| Drift `docker-compose.yml` en prod (DT-8 hardening) | ⚠️ NO tocado, sigue activo como DT |
+| nginx -t + reload prod | ✅ |
+| Backend restart prod | ✅ Application startup complete |
+| Frontend build + restart prod | ✅ |
+| Master_worker NO reiniciado | ✅ Up 3 hours preservado |
+| Bridge cron post-deploy | ✅ sin alertas |
+| Validación Paola en vivo | ✅ los 7 puntos OK |
+| Tag `sprint-paola-2026-04-27` | ✅ creado y pusheado |
+
+**Tiempo total fase A**: desde diagnóstico inicial (4 bugs) hasta validación Paola: ~5 horas.
+
+**DTs registradas durante el sprint**:
+- DT-37 — UI con 2 entry points para aprobar borrador (frontend post-deploy).
+- DT-38 — Zoho REST API path con firma inline base64 sin garantía render Outlook.
+
+**Pendiente para fase B (mismo día)**: hotfix tutela no envía correo cortesía (regresión post incidente master_worker).
