@@ -557,6 +557,89 @@ El frontend actual asume 3 colores (VERDE/AMARILLO/ROJO). Tras migración 18, el
 
 ---
 
+## 2026-04-27 — Deudas descubiertas durante incidente INC-2026-04-27 (master_worker pool dead)
+
+Origen: incidente documentado en `Brain/incidents/INC-2026-04-27_master_worker_pool_dead.md`. DB Postgres reinició el 2026-04-14 20:48 UTC y el master_worker quedó zombi 12d 20h por ausencia de reconnect logic. Detección por usuario final (Paola Lombana) — no automatizada.
+
+### DT-32 — Pool asyncpg sin reconnect en `master_worker_outlook.py`
+
+**Severidad:** **CRÍTICA**. Es la raíz del incidente INC-2026-04-27.
+
+**Estado actual:** `backend/master_worker_outlook.py` línea 149 hace `conn = await asyncpg.connect(DATABASE_URL)` y línea 152 `pool = await asyncpg.create_pool(...)` una sola vez al arrancar. El loop principal (línea 155 `while True:`) no tiene manejo de excepciones que detecte sockets cerrados ni recree el pool. El handler captura la excepción genérica pero solo loguea `str(e)` ("connection is closed") y reintenta sobre el mismo handle muerto.
+
+**Plan:**
+1. Wrap del cuerpo del `while True:` con try/except específico para `asyncpg.exceptions.PostgresConnectionError`, `asyncpg.exceptions.InterfaceError`, `asyncpg.exceptions.ConnectionDoesNotExistError`, `OSError`.
+2. En el except: cerrar el pool y conn viejos (`await pool.close()`, `await conn.close()` con try/except), recrearlos, loguear el evento con timestamp, continuar el loop.
+3. Si reconnect falla N veces consecutivas (ej: 5), salir con exit code != 0 para que `restart: unless-stopped` del compose levante el container limpio.
+4. Aplicar el **mismo fix** a `backend/demo_worker.py` (comparte el mismo patrón vulnerable).
+5. Test: kill manual de la DB en staging mientras el worker corre, verificar que reconecta sin manual restart.
+
+**Owner:** sprint dedicado próximos 7 días (deadline 2026-05-04).
+
+**Mitigación bridge:** ver `scripts/check_ingestion.sh` (cron horario que detecta gap de ingesta y restart automático). NO ES FIX.
+
+---
+
+### DT-33 — Healthcheck funcional faltante en workers
+
+**Severidad:** **ALTA**.
+
+**Estado actual:** `pqrs_v2_master_worker` reportaba `Up 13 days` durante el incidente cuando en realidad llevaba ~12 días procesando 0 casos. Docker reporta el container como "running" mientras el proceso esté vivo, sin validar trabajo útil.
+
+**Plan:**
+1. Agregar `HEALTHCHECK` en el Dockerfile del worker (o `healthcheck:` en `docker-compose.yml`) que ejecute un script tipo `python -c "import asyncpg, asyncio; asyncio.run(asyncpg.connect(os.environ['DATABASE_URL']).execute('SELECT 1'))"` cada 60s, con `timeout: 10s`, `retries: 3`, `start_period: 30s`.
+2. Si falla → container marcado `unhealthy`. Combinado con `restart: unless-stopped` y un orquestador (o cron de monitor que escuche eventos `unhealthy`), lleva a recovery automático.
+3. Aplicar al `master_worker_v2`, `demo_worker_v2`, `backend_v2`.
+4. Considerar reemplazar `monitor_docker.sh` actual por algo que reaccione a `unhealthy`, no solo a `not running`.
+
+**Owner:** sprint dedicado próximos 7 días.
+
+---
+
+### DT-34 — Alerting de "casos no ingestados" faltante
+
+**Severidad:** **ALTA**. Es la causa de que el incidente durara 12 días sin detección.
+
+**Estado actual:** No existe ninguna alarma que mida ingesta real. CloudWatch monitorea métricas de container (running, CPU, memoria) pero no estado de pipeline.
+
+**Plan:**
+1. **Métrica simple:** cron o Lambda que ejecute cada 15 min:
+   ```sql
+   SELECT cliente_id, EXTRACT(EPOCH FROM (NOW() - MAX(fecha_recibido)))/3600 AS horas_sin_caso
+   FROM pqrs_casos
+   WHERE cliente_id IN (SELECT id FROM clientes_tenant WHERE is_active = TRUE)
+   GROUP BY cliente_id;
+   ```
+2. **Alarma:** si `horas_sin_caso > 4` para algún cliente activo en horario hábil (L-V 8-18 hora CO) → alerta a Slack/email/SMS de Nico.
+3. **Integración:** push de la métrica como custom CloudWatch metric (`FlexPQR/Prod/HoursSinceLastCase` por `cliente_id`) y alarma standard CloudWatch sobre el valor.
+4. **Dashboards:** agregar widget al dashboard `flexpqr-prod` con la métrica por cliente.
+
+**Owner:** sprint dedicado próximos 7 días.
+
+**Mitigación bridge:** `scripts/check_ingestion.sh` (loguea + auto-restart). No alerta a Nico — solo aplica restart silencioso. Si el cron auto-restartea más de 2 veces en 24h, eso es señal de bug latente que requiere escalación manual.
+
+---
+
+### DT-35 — Dedup check después de Claude API en master_worker
+
+**Severidad:** **MEDIA** (optimización de costo, no correctitud).
+
+**Estado actual:** En `master_worker_outlook.py` líneas 225-248, el orden de operaciones por email es:
+1. `parece_pqrs(...)` (regex local, gratis).
+2. `clasificar_hibrido(...)` (línea 228) → puede llamar Anthropic API ($).
+3. **Pre-check de dedup** (`SELECT 1 FROM pqrs_casos WHERE external_msg_id=$1`, líneas 240-248).
+
+Si Zoho/Outlook re-entrega un email ya procesado (por ejemplo tras un restart o backlog), gastamos llamadas Claude antes de detectar el duplicado. La correctitud está intacta (el dedup-check + UNIQUE index lo detienen), pero el costo es innecesario.
+
+**Plan:**
+1. Mover el bloque `SELECT 1 FROM pqrs_casos WHERE external_msg_id=$1 LIMIT 1` (líneas 240-248) **antes** del `clasificar_hibrido` (línea 228), después del `parece_pqrs`.
+2. Si encuentra duplicado → `continue`, sin llamada Claude.
+3. Verificar en logs post-fix que `⏭️ Email ya procesado, ignorando` aparece sin precederlo un `INFO:httpx:HTTP Request: POST https://api.anthropic.com/v1/messages`.
+
+**Owner:** backlog técnico (no urgente). Puede tomarse en cualquier sprint de housekeeping del worker.
+
+---
+
 ## Estado consolidado post sprint Tutelas (2026-04-27)
 
 | DT | Título | Estado | Deadline / Trigger |
@@ -579,3 +662,7 @@ El frontend actual asume 3 colores (VERDE/AMARILLO/ROJO). Tras migración 18, el
 | DT-29 | `storage_engine` import eager | Activa | Agente 6 Sesión 3 |
 | DT-30 | Reconciliación ORM↔DB completa | Activa | sprint dedicado |
 | DT-31.a-e | Frontend tutelas (UI, capabilities, firma, tracking, semáforo) | Activas | sprint frontend post-deploy |
+| DT-32 | Pool asyncpg sin reconnect (master_worker, demo_worker) | **CRÍTICA** | sprint dedicado **2026-05-04** |
+| DT-33 | Healthcheck funcional en workers | Alta | sprint dedicado próximos 7d |
+| DT-34 | Alerting `MAX(created_at)` reciente por cliente | Alta | sprint dedicado próximos 7d |
+| DT-35 | Mover dedup-check antes de Claude API en master_worker | Media | backlog técnico |
