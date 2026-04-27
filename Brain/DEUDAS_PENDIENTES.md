@@ -640,6 +640,26 @@ Si Zoho/Outlook re-entrega un email ya procesado (por ejemplo tras un restart o 
 
 ---
 
+### DT-36 — `monitor_docker.sh` escribe a `/var/log/monitor_docker.log` sin permisos
+
+**Severidad:** **BAJA** (silencioso, no causa daño funcional, solo silencio operativo).
+
+**Detectado:** 2026-04-27 durante creación de `scripts/check_ingestion.sh` (incidente master_worker INC-2026-04-27).
+
+**Estado actual:** El cron de prod ejecuta `*/5 * * * * /home/ubuntu/monitor_docker.sh >> /var/log/monitor_docker.log 2>&1`. El usuario `ubuntu` no puede escribir en `/var/log` (owner `root:syslog`, sin permiso de write para otros). Resultado: el archivo `/var/log/monitor_docker.log` no existe (verificado con `ls -la /var/log/monitor_docker.log` → `cannot access`), y cualquier output del script (errores incluidos) se pierde.
+
+El script en sí parece publicar custom metrics a CloudWatch (`NAMESPACE="FlexPQR/Prod"`), así que la métrica push probablemente sí funciona. Lo que se pierde es el log local del propio script — el debugging local queda ciego.
+
+**Plan:**
+1. Cambiar path en crontab a `/home/ubuntu/logs/monitor_docker.log` (mismo patrón que `backup_postgres.sh` y el nuevo `check_ingestion.sh`).
+2. Crear `/home/ubuntu/logs/` si no existe (ya creado por el deploy de check_ingestion).
+3. Verificar que tras el cambio el log empieza a poblarse en el siguiente fire del cron (5 minutos).
+4. Revisar contenido inicial del log para detectar si había errores ocultos durante todo este tiempo.
+
+**Owner:** sprint dedicado fix de fondo monitoreo (junto con DT-32/DT-33/DT-34).
+
+---
+
 ## Estado consolidado post sprint Tutelas (2026-04-27)
 
 | DT | Título | Estado | Deadline / Trigger |
@@ -666,3 +686,4 @@ Si Zoho/Outlook re-entrega un email ya procesado (por ejemplo tras un restart o 
 | DT-33 | Healthcheck funcional en workers | Alta | sprint dedicado próximos 7d |
 | DT-34 | Alerting `MAX(created_at)` reciente por cliente | Alta | sprint dedicado próximos 7d |
 | DT-35 | Mover dedup-check antes de Claude API en master_worker | Media | backlog técnico |
+| DT-36 | `monitor_docker.sh` log path roto (`/var/log` no writeable) | Baja | sprint monitoreo (junto DT-32/33/34) |
