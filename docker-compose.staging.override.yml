@@ -1,0 +1,84 @@
+# =====================================================================
+# docker-compose.staging.override.yml — overrides ESPECÍFICOS DE STAGING
+# =====================================================================
+#
+# Aplicar con:
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.staging.override.yml \
+#                  up -d
+#
+# (En prod NO se aplica este archivo. Solo el yml base.)
+#
+# Resuelve DT-15: bind mounts read-only para backend/workers permiten
+# que cambios en .py se reflejen sin rebuild de imagen. Acelera ciclos
+# de iteración en staging. Read-only previene escritura desde el container.
+#
+# Resuelve deuda residual de DT-28: caps de logs por default para todos
+# los services activos. Evita recurrencia del incidente del 2026-04-24
+# (6.4 GB de logs aiokafka del ai-worker huérfano saturando el host).
+# =====================================================================
+
+services:
+  backend_v2:
+    volumes:
+      - ./backend:/app:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  master_worker_v2:
+    volumes:
+      - ./backend:/app:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  demo_worker_v2:
+    volumes:
+      - ./backend:/app:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # postgres / redis / minio / nginx mantienen su config base; añadimos
+  # solo el cap de logs como prevención DT-28.
+  postgres_v2:
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  redis_v2:
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "2"
+
+  minio_v2:
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "2"
+
+  nginx_ssl:
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  frontend_v2:
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "2"
