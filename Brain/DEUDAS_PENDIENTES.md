@@ -278,7 +278,11 @@ Adicionalmente, UUIDs productivos de FlexFintech y Cliente2 en `04_multi_tenant_
 2. Rotar en Azure Portal el client_secret (`568f75dac62845e5d8e4caff0deef488c2896803cd`).
 3. Actualizar `.env` de prod con nuevos valores.
 4. Verificar que buzón ARC sigue sincronizando con las nuevas credenciales.
-5. Una vez confirmada rotación, avanzar a DT-21 (purga historia git).
+5. **Rotar también `ANTHROPIC_API_KEY` de staging** (`.env` del server `flexpqr-staging` quedó inválido durante smoke E2E — devolvió 401). Sustituir por una nueva.
+6. **Revocar la key ad-hoc** que Nico generó para los smokes #2 y #3 del sprint Tutelas (ya cumplió su propósito).
+7. Una vez confirmada rotación, avanzar a DT-21 (purga historia git).
+
+**Deadline:** **2026-04-30** (3 días desde 2026-04-27).
 
 **Deadline:** 2026-04-30 (7 días desde 2026-04-23).
 
@@ -439,3 +443,139 @@ Adicionalmente, UUIDs productivos de FlexFintech y Cliente2 en `04_multi_tenant_
 **Riesgo si se ignora:** cualquier feature futura que use SQLAlchemy ORM (queries declarativas, alembic migrations, admin UI) verá una vista parcial del schema → bugs latentes.
 
 **Responsable:** sprint dedicado de housekeeping o Agente 5 (Docs) si lo prioriza Nico antes de cerrar Sesión 3.
+
+---
+
+## Deudas pre-sprint Tutelas referenciadas (consolidadas durante Agente 5)
+
+Estas DTs venían de antes del sprint y fueron mencionadas por Nico al cerrar Sesión 3. Se consolidan acá para tener un único índice. Estado verificado al 2026-04-27.
+
+### DT-15 — Bind mounts workers staging :ro
+
+**Estado:** **PENDIENTE**, asignada al Agente 6 de la Sesión 3 actual.
+
+**Descripción:** los workers en staging deben tener `volumes: ./backend:/app:ro` (read-only) en `docker-compose.staging.yml` para que cambios en `.py` se reflejen sin rebuild de imagen, acelerando ciclos de iteración. Modo `:ro` previene escritura accidental desde el container.
+
+**Plan:** Agente 6 ajusta los servicios `master_worker_v2`, `demo_worker_v2`, `backend_v2` en el yml de staging activo. Validar con `touch backend/app/services/sla_engine.py` y verificar que el container ve la nueva mtime.
+
+---
+
+### DT-17 — CHECK semáforo extendido (NARANJA, NEGRO)
+
+**Estado:** **RESUELTA 2026-04-23** — Migración 18 del sprint Tutelas.
+
+`pqrs_casos_semaforo_sla_check` actualizado a 5 valores: `VERDE, AMARILLO, NARANJA, ROJO, NEGRO`. Ver [[SPRINT_TUTELAS_S123_AG1_APLICACION]].
+
+⚠️ **ORM stale:** `models.py:PqrsCaso.__table_args__` aún declara CHECK con 3 valores. No bloqueante (asyncpg directo no usa ORM). Se aborda en DT-30.
+
+---
+
+### DT-18 — Fixtures sintéticos pendientes / oficios reales de Paola
+
+**Estado:** **ACTIVA**.
+
+3 fixtures sintéticos creados en sprint Tutelas (`backend/tests/fixtures/tutelas/01_*.txt`, `02_*.txt`, `03_*.txt`) con marker `SYNTHETIC_FIXTURE_V1` para validar el extractor con confidence alto/bajo/sin-plazo.
+
+**Lo pendiente:** Paola Lombana (ARC) debe compartir 5-10 oficios judiciales reales (PDF) para validar precisión de Claude Sonnet en producción. Plantilla del mensaje en [[SPRINT_TUTELAS_S123]] sección "3 fixtures sintéticos".
+
+**Sin esto:** las métricas de `_confidence` que vemos hoy son contra texto sintético; Claude está legítimamente menos seguro con fixtures que con oficios reales. No es bug del extractor.
+
+**Responsable:** Nico solicita; Paola entrega; agente futuro corre extractor real y reporta precisión.
+
+---
+
+### DT-22 — Backup cifrado de SSH keys + Brain
+
+**Estado:** **ACTIVA**.
+
+**Descripción:** las SSH keys (`~/.ssh/flexpqr-prod`, `~/.ssh/flexpqr-staging`) y el directorio `Brain/` viven solo en la máquina de Nico. Bus-factor de 1.
+
+**Plan:**
+1. Backup cifrado con `age` o `gpg` de los archivos sensibles.
+2. Copia en al menos 2 ubicaciones (USB físico + cloud encrypted).
+3. Documentar el procedimiento de recovery.
+
+**Responsable:** Nico. No bloqueante de runtime.
+
+---
+
+### DT-23 — Claude Code Pro training opt-out
+
+**Estado:** **MITIGADA con toggle off** (2026-04-XX).
+
+**Descripción:** Anthropic puede usar conversaciones de Claude Code Pro para training. Flag de privacidad togglead-able en la consola.
+
+**Mitigación aplicada:** opt-out activado en cuenta de Nico. Las conversaciones del proyecto no entran al pool de training.
+
+**Pendiente:** revalidar el setting cada 6 meses; Anthropic puede cambiar defaults.
+
+---
+
+### DT-24 — Migrar a API key comercial (vs Pro tier)
+
+**Estado:** **ACTIVA**.
+
+**Descripción:** Claude Code Pro tier tiene rate limits y caps de tokens distintos al API comercial. Para escala productiva con FlexPQR (cuando ARC + FlexFintech + nuevos clientes corran tutelas en simultáneo), conviene migrar a billing API directo.
+
+**Plan:**
+1. Crear cuenta de billing API.
+2. Migrar `ANTHROPIC_API_KEY` en prod (tras DT-20 rotación).
+3. Setear caps de spend en consola.
+4. Revisar latencia + rate limit del tier.
+
+**Responsable:** Nico cuando el volumen lo justifique.
+
+---
+
+## DT-31 — Deudas frontend tutelas (descubiertas durante sprint)
+
+**Origen:** el sprint Tutelas habilitó backend + DB completo, pero la UI no se tocó. Las siguientes son features pendientes para que el frontend aproveche el pipeline:
+
+### DT-31.a — UI polimórfica para tutelas
+
+Vista dedicada que consume `tutelas_view` (con filtro `cliente_id` explícito por **DT-30 / RLS no hereda**). Campos a mostrar: expediente, juzgado, accionante (anonimizado, solo hash), plazo restante, semáforo, riesgo de desacato.
+
+### DT-31.b — UI para gestión de capabilities
+
+Tabla `user_capabilities` necesita admin UI para que un super_admin del tenant otorgue/revoque `CAN_SIGN_DOCUMENT` y `CAN_APPROVE_RESPONSE` a abogados/analistas. Hoy se hace SQL directo.
+
+### DT-31.c — Firma digital de informes
+
+Una vez el abogado redacta el informe de respuesta a la tutela, debe firmarse digitalmente antes de enviar al juzgado. Requiere integración con Docusign/equivalente + actualización de `tutela_informe_rendido_at` post-firma.
+
+### DT-31.d — Tracking post-informe
+
+Una tutela cuyo informe ya se rindió pasa a estado de "espera de fallo". UI debe mostrar tutelas en ese estado con `tutela_fallo_sentido = NULL` y permitir registrar fallo cuando llega.
+
+### DT-31.e — Visualización de semáforo NARANJA y NEGRO
+
+El frontend actual asume 3 colores (VERDE/AMARILLO/ROJO). Tras migración 18, el backend reporta NARANJA y NEGRO. La UI debe agregarlos en la leyenda + filtros + ordenamientos.
+
+**Severidad:** todas medias. No bloquean operación (el SQL/API responde correctamente). Bloquean UX.
+
+**Responsable:** sprint frontend dedicado, post-deploy a prod del sprint Tutelas backend.
+
+---
+
+## Estado consolidado post sprint Tutelas (2026-04-27)
+
+| DT | Título | Estado | Deadline / Trigger |
+|---|---|---|---|
+| DT-1 a DT-7 | Hardening AWS pre-sprint | (ver historial Brain) | varía |
+| DT-8 | Guardrail compose | Activa | próximo deploy |
+| DT-15 | Bind mounts workers staging | Pendiente | Agente 6 Sesión 3 |
+| DT-17 | CHECK semáforo extendido | **RESUELTA** 2026-04-23 | mig 18 |
+| DT-18 | Fixtures reales Paola | **ACTIVA** | sin deadline |
+| DT-19 | Drift detection semestral | Activa | semestral |
+| DT-20 | Rotación creds ARC + Anthropic key | **ACTIVA** | **2026-04-30** |
+| DT-21 | Purga git history | Activa | post-DT-20 |
+| DT-22 | Backup SSH/Brain cifrado | Activa | sin deadline |
+| DT-23 | Claude Code Pro training opt-out | **Mitigada** | revalidar 6m |
+| DT-24 | Migrar a API key comercial | Activa | cuando volumen lo amerite |
+| DT-25 | Backend `/health` ausente | Activa | Agente 6 Sesión 3 |
+| DT-26 | Kafka ausente staging | **Mitigada** (ai-worker stop) | sprint dedicado |
+| DT-27 | SQLs legacy en raíz | Activa | housekeeping post-tutelas |
+| DT-28 | Disco staging 100% | **RESUELTA** 2026-04-24 | -7.7 GB |
+| DT-29 | `storage_engine` import eager | Activa | Agente 6 Sesión 3 |
+| DT-30 | Reconciliación ORM↔DB completa | Activa | sprint dedicado |
+| DT-31.a-e | Frontend tutelas (UI, capabilities, firma, tracking, semáforo) | Activas | sprint frontend post-deploy |
