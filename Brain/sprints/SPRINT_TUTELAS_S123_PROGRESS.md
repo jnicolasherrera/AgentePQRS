@@ -121,11 +121,14 @@
 - [x] Cero drift adicional descubierto durante QA.
 - [x] Cero regresiones detectadas en ARC seed.
 
-### Agente 5 — Docs (pendiente)
-- [ ] SPRINT_TUTELAS_S123.md final.
-- [ ] RUNBOOK_TUTELAS.md.
-- [ ] RUNBOOK_MIGRATE_SH.md.
-- [ ] CHANGELOG.md.
+### Agente 5 — Docs — ✅ COMPLETADO 2026-04-27
+- [x] `Brain/sprints/SPRINT_TUTELAS_S123.md` con mermaid + decisiones B2/W3 + schema metadata + 5 bugs + lecciones + métricas.
+- [x] `Brain/runbooks/RUNBOOK_TUTELAS.md` (caso smoke 0f83ce56-... documentado con flag NO ELIMINAR).
+- [x] `Brain/runbooks/RUNBOOK_MIGRATE_SH.md` con flags + rollback + desbloqueo lock.
+- [x] `Brain/DEUDAS_PENDIENTES.md` actualizada: DT-15/17/18/22/23/24 agregadas, DT-20 con deadline 2026-04-30 + Anthropic key staging, DT-31.a-e frontend tutelas. Tabla consolidada al final.
+- [x] `Brain/00_maestro/01_ARQUITECTURA_MAESTRA.md` con sección "Polimorfismo por `tipo_caso`".
+- [x] `backend/app/services/README.md` con inventario + invariantes del pipeline.
+- [x] `Brain/CHANGELOG.md` con entrada `[Unreleased]` del sprint completo.
 
 ### Agente 6 — Infra + Deploy (pendiente)
 - [ ] DT-15 bind mounts staging.

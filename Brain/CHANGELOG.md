@@ -1,5 +1,80 @@
 # Brain Changelog
 
+## [Unreleased] — Sprint Tutelas S1+S2+S3 (2026-04-23 → 2026-04-27)
+
+### Added — backend
+- **`backend/app/services/sla_engine.py`** (nuevo). Motor Python horas hábiles para tutelas. Coexiste con SP sectorial vía trigger híbrido. Funciones: `sumar_horas_habiles`, `calcular_vencimiento_tutela`, `calcular_vencimiento_medida_provisional`. 16 tests unitarios.
+- **`backend/app/services/capabilities.py`** (nuevo). Capabilities granulares por usuario sobre tabla `user_capabilities`. `user_has_capability` con scope NULL=global, `grant_capability` idempotente, `list_user_capabilities` NULLS FIRST. 8 tests.
+- **`backend/app/services/pipeline.py`** (nuevo). Unificador post-clasificación. `process_classified_event` orquesta enrich → SLA Python → INSERT → vinculación. Imports diferidos para tolerar enrichers no instalados.
+- **`backend/app/services/vinculacion.py`** (nuevo). Vincula tutela nueva con PQRS previos del mismo `documento_peticionante_hash` en ventana 30d. 4 motivos (PQRS_NO_CONTESTADO, RESPUESTA_INSATISFACTORIA, MULTIPLE_MATCHES, sin match → None). Cross-tenant safe.
+- **`backend/app/services/enrichers/`** (paquete nuevo). Dispatcher polimórfico por `tipo_caso`. Auto-registro al importar.
+- **`backend/app/services/enrichers/tutela_extractor.py`** (nuevo). Claude Sonnet + tool_use forzado + `TUTELA_SCHEMA` estricto. Hash documento con salt por tenant. Fallback defensivo en cualquier error.
+
+### Added — DB
+- **Migración 18** `18_check_semaforo_extendido.sql`. Columna `semaforo_sla` (DEFAULT 'VERDE') + CHECK extendido a 5 valores (VERDE/AMARILLO/NARANJA/ROJO/NEGRO).
+- **Migración 19** `19_tutelas_pipeline_foundation.sql`. `metadata_especifica` JSONB + columnas tutela (`tutela_informe_rendido_at`, `tutela_fallo_sentido`, `tutela_riesgo_desacato`) + `documento_peticionante_hash` + `clientes_tenant.config_hash_salt` + 3 índices (GIN metadata, plazo tutela, doc hash) + trigger híbrido `fn_set_fecha_vencimiento` (3 capas).
+- **Migración 20** `20_user_capabilities.sql`. Tabla `user_capabilities` con RLS PERMISSIVE FOR ALL + 3 índices + grants default ARC TUTELA.
+- **Migración 21** `21_tutelas_view.sql`. MATERIALIZED VIEW `tutelas_view` polimórfica + 3 índices + COMMENT advertencia RLS.
+- **Migración 22** `22_add_correlation_id.sql` (fix smoke E2E). Columna `correlation_id` UUID NOT NULL DEFAULT gen_random_uuid + índice. Cierra bug latente histórico.
+
+### Changed — backend
+- `db_inserter.insert_pqrs_caso` extendido con kwargs opcionales `metadata_especifica` + `fecha_vencimiento`. Propaga `external_msg_id` (event con fallback `message_id`/`id`) y `documento_peticionante_hash` (de `metadata.accionante.documento_hash`) al INSERT. Retrocompat 100%.
+- `scoring_engine.py` extendido con `SEMAFORO_CONFIG` polimórfico (TypedDict) + `calcular_semaforo`. PQRS_DEFAULT no usa NARANJA; TUTELA agrega NARANJA + NEGRO.
+- `worker_ai_consumer.py` invoca `pipeline.process_classified_event` en vez de `db_inserter.insert_pqrs_caso` directo.
+- `master_worker_outlook.py` + `demo_worker.py` adoptan adapter `ResultadoClasificacion → ClassificationResult` + pool asyncpg mínimo + `process_classified_event`. Preservan post-INSERT (acuse, borrador, radicado).
+- `db_inserter._parse_fecha` ahora usa `datetime.fromisoformat` como primary path; pandas queda como fallback (eliminada dependencia dura).
+
+### Fixed
+- **Bug del almuerzo en `sumar_horas_habiles`**: sumar 8h desde 08:00 daba 16:00 (no 17:00). Fix: `_minutos_restantes_bloque` retorna minutos del bloque actual (no del día); cursor avanza por bloques 08-12 / 13-17.
+- **`_parse_fecha` sin pandas**: caía a `now()` en env sin pandas. Fix: `fromisoformat` primary.
+- **`correlation_id` columna inexistente**: bug latente histórico (declarado en `db_inserter`+ORM, ausente del schema real). Fix: migración 22.
+- **`external_msg_id` no propagado**: el pipeline integrado lo perdía (workers lo manejaban manualmente antes del sprint). Fix: `db_inserter` lo lee del event.
+- **`documento_peticionante_hash` columna física vacía**: el extractor lo guardaba solo en metadata JSONB; vinculación filtraba por columna física → match siempre 0. Fix: `db_inserter` la extrae de metadata y persiste.
+- **`((X++))` con `set -e` en `migrate.sh`**: post-increment retorna 0 → bash interpreta como failure. Fix: `X=$((X + 1))`.
+
+### Infrastructure
+- **DT-28** (staging al 100% disco): liberado 7.7 GB. `truncate -s 0` log de `ai-worker-1` huérfano (-6.4 GB) + `docker container prune` + `docker image prune` (-535 MB) + `journalctl --vacuum-size=100M` (-410 MB). Container `ai-worker-1` removido + bloque comentado en `docker-compose.yml` previene recurrencia.
+- **`scripts/migrate.sh`** runner idempotente con `aequitas_migrations` (filename + sha256 + applied_at) + lock por tabla + flags `--env=staging|prod` + `--dry-run` + guard `99_seed_*` → ABORT si env != staging.
+- **`migrations/baseline/prod_schema_20260423_1600.sql`**: pg_dump schema-only de prod (DDL puro, 0 INSERT/COPY) + `migrations/00_baseline_schema.sql` limpiado. Cierra el drift histórico repo↔prod (las SQLs originales 01-08 + 14 no reconstruían el schema real).
+
+### Tests
+- 67 unit tests (sla_engine, capabilities, scoring semáforo, pipeline, db_inserter, enrichers, vinculacion).
+- 36 integration tests (E2E pipeline 6 escenarios, workers convergen 8, no-regresión PQRS 12, isolation tutelas 7, burst 50 + 3).
+- 4 ARC regression contra staging real (opt-in `RUN_STAGING_REGRESSION=1`).
+- 1 smoke E2E real con Claude Sonnet contra staging DB (opt-in `RUN_STAGING_SMOKE=1`).
+- **Total: 107 tests, todos verdes.**
+
+### Documentation
+- `Brain/sprints/SPRINT_TUTELAS_S123.md` — documento principal con decisiones B2/W3, schema metadata, 5 bugs, lecciones.
+- `Brain/sprints/SPRINT_TUTELAS_S123_*` — 9 docs: progreso, diagnóstico prod, análisis drift, bloqueante repo, baseline schema, rebuild staging, smoke E2E, AG1/AG2/AG3/AG4 diagnóstico+aplicación, AG5 docs.
+- `Brain/runbooks/RUNBOOK_TUTELAS.md` — operación de tutelas (consultas, re-extracción, refresh view, debug revisión humana, vinculación manual, alertas CloudWatch).
+- `Brain/runbooks/RUNBOOK_MIGRATE_SH.md` — uso del runner, rollback manual, desbloqueo de lock.
+- `Brain/00_maestro/01_ARQUITECTURA_MAESTRA.md` — sección "Polimorfismo por tipo_caso".
+- `backend/app/services/README.md` — inventario de módulos + invariantes del pipeline.
+
+### Deudas registradas
+- **DT-15** Bind mounts workers staging (Agente 6 Sesión 3).
+- **DT-17** RESUELTA por mig 18.
+- **DT-18** Fixtures reales de Paola (oficios judiciales).
+- **DT-19** Drift detection semestral.
+- **DT-20** Rotación creds ARC + Anthropic key staging. **DEADLINE 2026-04-30.**
+- **DT-21** Purga git history (depende DT-20).
+- **DT-22** Backup cifrado SSH/Brain.
+- **DT-23** Mitigada (Claude Code Pro training opt-out).
+- **DT-24** Migrar a API key comercial.
+- **DT-25** Backend `/health` ausente.
+- **DT-26** Mitigada (Kafka ausente staging, ai-worker stop).
+- **DT-27** SQLs legacy en raíz.
+- **DT-28** RESUELTA.
+- **DT-29** `storage_engine` import eager.
+- **DT-30** Reconciliación ORM↔DB completa.
+- **DT-31** (a-e) Frontend tutelas: UI polimórfica, capabilities, firma digital, tracking post-informe, semáforo NARANJA/NEGRO.
+
+### Bloqueantes para deploy a producción (sprint Tutelas)
+1. Migración 14 sectorial pendiente en prod (sprint dedicado).
+2. DT-20 rotación credenciales ARC + Anthropic key (deadline 2026-04-30).
+3. DT-21 purga git history (depende de DT-20).
+
 ## 2026-04-16 — Hardening AWS sprint cierre (QW3 CloudTrail + QW4 GuardDuty)
 
 ### Contexto
