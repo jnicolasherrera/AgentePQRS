@@ -406,3 +406,36 @@ Adicionalmente, UUIDs productivos de FlexFintech y Cliente2 en `04_multi_tenant_
 3. Opción de mínimo esfuerzo: documentar en `pytest.ini` un marker `no_storage` y un filtro por default que skipee tests que requieren storage.
 
 **Responsable:** Agente 6 (Infra) en Sesión 3, o housekeeping posterior al sprint.
+
+---
+
+### DT-30 — Reconciliación ORM `models.py` ↔ DB completa pendiente
+
+**Origen:** auditoría sistemática del 2026-04-27 durante el smoke E2E del sprint Tutelas. Comparó las 37 columnas reales de `pqrs_casos` en staging contra `backend/app/core/models.py:PqrsCaso` y contra el INSERT de `backend/app/services/db_inserter.py`. Detalle completo en `Brain/sprints/SPRINT_TUTELAS_S123_SMOKE_E2E.md` sección "Auditoría sistemática drift".
+
+**Severidad:** Media. No bloquea runtime hoy (todo el código usa `asyncpg` directo, no SQLAlchemy ORM). Bloquea cualquier código futuro que decida usar ORM para queries — bugs latentes silenciosos.
+
+**Hallazgos concretos:**
+
+1. **9 columnas en DB no declaradas en ORM** (post mig 14, 18, 19, 22):
+   `external_msg_id`, `fecha_asignacion`, `updated_at`, `es_pqrs`, `reply_adjunto_ids`, `texto_respuesta_final`, `borrador_ia_original`, `edit_ratio`, `metadata_especifica`, `tutela_informe_rendido_at`, `tutela_fallo_sentido`, `tutela_riesgo_desacato`, `documento_peticionante_hash` (en realidad son 13).
+
+2. **`semaforo_sla` ORM CHECK desactualizado**: declara `IN ('VERDE','AMARILLO','ROJO')`, DB tiene 5 valores tras mig 18 (`+ NARANJA, NEGRO`).
+
+3. **6 columnas declaradas en ORM se llenan post-INSERT** por workflows específicos (`problematica_detectada`, `plantilla_id`, `aprobado_por`, `aprobado_at`, `enviado_at`, `acuse_enviado`, `numero_radicado`). No es bug, es diseño — pero el patrón merece documentación para que un dev nuevo no asuma que el INSERT inicial los popula.
+
+**Mitigación parcial aplicada en sprint Tutelas (2026-04-27):**
+
+- Migración 22: agrega columna `correlation_id` (estaba en ORM e INSERT pero no en DB → DRIFT-B con bug bloqueante).
+- Fix `db_inserter`: propaga `external_msg_id` y `documento_peticionante_hash` al INSERT (DRIFT-D con bugs bloqueantes para dedup y vinculación).
+
+**Pendiente para sprint dedicado post-tutelas:**
+
+1. Actualizar `models.py:PqrsCaso` para reflejar las 13 columnas ausentes.
+2. Actualizar `semaforo_sla` CHECK del ORM a 5 valores.
+3. Documentar en docstring de `PqrsCaso` qué columnas son "INSERT-time" (las populadas por `db_inserter`) vs "post-INSERT" (workflows específicos).
+4. Considerar generar `models.py` automáticamente desde `pg_dump --schema-only` para evitar que vuelva a desincronizarse.
+
+**Riesgo si se ignora:** cualquier feature futura que use SQLAlchemy ORM (queries declarativas, alembic migrations, admin UI) verá una vista parcial del schema → bugs latentes.
+
+**Responsable:** sprint dedicado de housekeeping o Agente 5 (Docs) si lo prioriza Nico antes de cerrar Sesión 3.

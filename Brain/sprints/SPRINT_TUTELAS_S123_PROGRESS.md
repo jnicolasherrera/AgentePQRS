@@ -102,7 +102,9 @@
 
 ### Cierre Sesión 2
 - [x] Agente 2 ✅ (9 commits) + Agente 3 ✅ (7 commits) pusheados a origin/develop.
-- [ ] Reporte checkpoint a Nico (smoke real de staging queda opt-in; 42+16 tests verdes en env local con `--noconftest`).
+- [x] Smoke E2E ejecutado contra staging real con Claude Sonnet (1 call). Tras 2 fallos (bugs latentes detectados) + 2 fixes commiteados (migración 22, fix db_inserter) + 1 re-corrida → ✅ PASSED en 30s. Caso `0f83ce56-...` queda en staging con marker `[SMOKE_TEST_AGENTE3]` para reuso del Agente 4.
+- [x] Auditoría sistemática drift ORM/DB/INSERT (37 columnas) → DT-30 reclasificada con plan completo.
+- [x] Brain: `SPRINT_TUTELAS_S123_SMOKE_E2E.md` con bitácora de los 3 smokes + auditoría + verificaciones SQL.
 - [ ] PAUSA — esperar green-light Sesión 3.
 
 ## Sesión 3 — Agentes 4 + 5 + 6 (pendiente de green-light)
