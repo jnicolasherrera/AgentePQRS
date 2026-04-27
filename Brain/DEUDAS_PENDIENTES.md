@@ -640,6 +640,59 @@ Si Zoho/Outlook re-entrega un email ya procesado (por ejemplo tras un restart o 
 
 ---
 
+### DT-37 — Frontend con 2 entry points distintos para aprobar borrador
+
+**Severidad:** **MEDIA** (UX confuso, no funcional).
+
+**Detectado:** 2026-04-27 durante sprint Paola (4 fixes ARC).
+
+**Estado actual:** existen dos componentes en frontend que disparan aprobación de borrador hacia `POST /casos/aprobar-lote`:
+
+| Componente | Trigger | Particularidades |
+|---|---|---|
+| `frontend/src/components/ui/firma-modal.tsx` | Modal explícito con confirmación de password | Sólo recibe `caso_ids` y `password`, no envía texto |
+| `frontend/src/components/ui/caso-detail-overlay.tsx` (`handleSendResponse` línea 132) | Botón "Enviar Respuesta" en footer del overlay | Usa `prompt()` JS nativo para password, no envía texto |
+
+Ambos comparten el bug de no persistir el borrador editado en DB antes de llamar `/aprobar-lote` (mitigado en sprint Paola con auto-save debounce). Pero la coexistencia de dos UI distintos para la misma acción confunde al usuario y multiplica los lugares donde aplicar fixes.
+
+**Plan:**
+1. Decidir UX canónica: ¿modal explícito (firma-modal) o flujo inline en overlay?
+2. Migrar el otro punto a la implementación elegida.
+3. Eliminar el componente deprecado.
+4. Considerar también si `prompt()` es aceptable para password en producción (UX y seguridad mediocres) — sustituir por modal con input type=password.
+
+**Owner:** sprint frontend dedicado (housekeeping UI), post-deploy sprint Paola.
+
+---
+
+### DT-38 — Firma institucional inline base64 vía Zoho REST API no garantiza render en Outlook
+
+**Severidad:** **MEDIA** (P3 fix parcial: SMTP path resuelto, Zoho path queda con limitación).
+
+**Detectado:** 2026-04-27 durante sprint Paola, fix P3.
+
+**Estado actual:** `backend/app/services/zoho_engine.py:_firma_html()` retorna `<img src="data:image/jpeg;base64,...">` (inline data URI). El cuerpo HTML va vía Zoho REST API `POST /api/accounts/{accountId}/messages`. Zoho server-side procesa la HTML y eventualmente entrega multipart/related con CID generado por Zoho — pero **no tenemos garantía** de que clientes como Outlook desktop renderizen la imagen.
+
+Investigación de Zoho Mail API (Context7):
+- El endpoint `/messages` recibe `content` HTML pero NO acepta parámetros explícitos para marcar imágenes inline en la request.
+- El flujo "oficial" de Zoho para inline images requiere proceso de 2 pasos: primero `POST /messages/uploadAttachment` con flag `isInline=true`, luego enviar el mensaje referenciando el `attachmentId` retornado vía `cid:`.
+
+**Mitigación bridge aplicada en sprint Paola:** path SMTP fallback (`backend/app/api/routes/casos.py:_send_via_smtp_fallback`) se reescribió con `MIMEMultipart('related')` + CID propio generado por Python email lib. Funciona en todos los clientes incluyendo Outlook. El path Zoho (primario) quedó sin cambios — los recipients via Zoho con cliente Outlook pueden seguir sin ver la imagen.
+
+**Plan de fix de fondo:**
+1. Modificar `ZohoServiceV2.send_reply` para hacer 2-step:
+   1. `POST /api/accounts/{accountId}/messages/uploadAttachment` con la firma + `isInline=true`.
+   2. Recibir `attachmentId`, sustituir CID en el HTML body por el ID retornado.
+   3. `POST /messages` con el HTML + `inlineImages` referenciando el ID.
+2. Agregar test de integración que mockee Zoho HTTP y valide secuencia de calls.
+3. Smoke E2E con cuenta Outlook real para confirmar render.
+
+**Owner:** sprint dedicado próximos 14 días.
+
+**Riesgo si se ignora:** clientes ARC y otros con peticionantes en Outlook/corporate seguirán sin ver imagen institucional renderizada para la mayoría de respuestas (path Zoho es ~99% del volumen).
+
+---
+
 ### DT-36 — `monitor_docker.sh` escribe a `/var/log/monitor_docker.log` sin permisos
 
 **Severidad:** **BAJA** (silencioso, no causa daño funcional, solo silencio operativo).
@@ -687,3 +740,5 @@ El script en sí parece publicar custom metrics a CloudWatch (`NAMESPACE="FlexPQ
 | DT-34 | Alerting `MAX(created_at)` reciente por cliente | Alta | sprint dedicado próximos 7d |
 | DT-35 | Mover dedup-check antes de Claude API en master_worker | Media | backlog técnico |
 | DT-36 | `monitor_docker.sh` log path roto (`/var/log` no writeable) | Baja | sprint monitoreo (junto DT-32/33/34) |
+| DT-37 | 2 entry points UI para aprobar borrador (firma-modal + overlay) | Media | sprint frontend post-deploy |
+| DT-38 | Zoho REST API inline image no garantiza render en Outlook | Media | sprint dedicado próximos 14d |
