@@ -5,6 +5,7 @@ import logging
 import os
 import smtplib
 from datetime import datetime, timezone
+from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Dict, Any, List, Optional
@@ -32,18 +33,35 @@ def _md_to_html(text: str) -> str:
     return text
 
 
-def _firma_html() -> str:
-    path = os.path.join(os.path.dirname(__file__), "..", "..", "static", "firma_correo.jpeg")
+_FIRMA_CID = "firma_arc"
+
+
+def _firma_path() -> str:
+    return os.path.join(os.path.dirname(__file__), "..", "..", "static", "firma_correo.jpeg")
+
+
+def _firma_bytes() -> Optional[bytes]:
     try:
-        with open(path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-        return f'<br><img src="data:image/jpeg;base64,{b64}" style="max-width:560px;display:block;" alt="Firma" />'
+        with open(_firma_path(), "rb") as f:
+            return f.read()
     except Exception:
+        return None
+
+
+def _firma_html() -> str:
+    """HTML reference vía CID. Requiere que el caller adjunte la imagen como
+    parte inline con Content-ID matching (_FIRMA_CID)."""
+    if _firma_bytes() is None:
         return ""
+    return f'<br><img src="cid:{_FIRMA_CID}" style="max-width:560px;display:block;" alt="Firma" />'
 
 
 def _send_via_smtp_fallback(to_email: str, subject: str, body: str) -> bool:
-    """Fallback SMTP cuando Zoho falla. Usa SMTP_FALLBACK_* env vars, cae a Gmail demo si no hay."""
+    """Fallback SMTP cuando Zoho falla. Usa SMTP_FALLBACK_* env vars, cae a Gmail demo si no hay.
+
+    Construye MIME multipart/related con firma inline (CID) para que Outlook
+    y otros clientes que bloquean data: URIs rendericen la imagen.
+    """
     smtp_host = os.environ.get("SMTP_FALLBACK_HOST", "smtp.gmail.com")
     smtp_port = int(os.environ.get("SMTP_FALLBACK_PORT", "465"))
     smtp_user = os.environ.get("SMTP_FALLBACK_USER", os.environ.get("DEMO_GMAIL_USER", ""))
@@ -52,20 +70,34 @@ def _send_via_smtp_fallback(to_email: str, subject: str, body: str) -> bool:
         logger.error("SMTP fallback no configurado — envío perdido para: " + to_email)
         return False
     try:
-        firma = _firma_html()
+        firma_data = _firma_bytes()
+        firma_ref = _firma_html() if firma_data else ""
         html_body = (
             "<div style='font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6'>"
-            + _md_to_html(body) + firma + "</div>"
+            + _md_to_html(body) + firma_ref + "</div>"
         )
-        msg = MIMEMultipart("alternative")
-        msg["From"] = f"FlexPQR <{smtp_user}>"
-        msg["To"] = to_email
-        msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
+        root = MIMEMultipart("related") if firma_data else MIMEMultipart("alternative")
+        root["From"] = f"FlexPQR <{smtp_user}>"
+        root["To"] = to_email
+        root["Subject"] = subject
+
+        if firma_data:
+            alt = MIMEMultipart("alternative")
+            alt.attach(MIMEText(body, "plain", "utf-8"))
+            alt.attach(MIMEText(html_body, "html", "utf-8"))
+            root.attach(alt)
+
+            img = MIMEImage(firma_data, _subtype="jpeg")
+            img.add_header("Content-ID", f"<{_FIRMA_CID}>")
+            img.add_header("Content-Disposition", "inline", filename="firma.jpg")
+            root.attach(img)
+        else:
+            root.attach(MIMEText(body, "plain", "utf-8"))
+            root.attach(MIMEText(html_body, "html", "utf-8"))
+
         with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
             server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, to_email, msg.as_string())
+            server.sendmail(smtp_user, to_email, root.as_string())
         logger.warning(f"Email enviado via SMTP fallback → {to_email}")
         return True
     except Exception as e:
@@ -375,6 +407,9 @@ async def editar_borrador(
 
     original_ai = caso["borrador_respuesta"] or ""
 
+    if body.texto == original_ai:
+        return {"ok": True, "unchanged": True}
+
     await conn.execute(
         "UPDATE pqrs_casos SET borrador_respuesta = $1 WHERE id = $2",
         body.texto, caso["id"],
@@ -384,7 +419,7 @@ async def editar_borrador(
         caso["id"], uuid.UUID(current_user.usuario_id), json.dumps({"chars": len(body.texto)}),
     )
 
-    if original_ai and body.texto != original_ai:
+    if original_ai:
         similarity = _text_similarity(original_ai, body.texto)
         try:
             await conn.execute(
@@ -428,8 +463,8 @@ async def upload_reply_adjunto(
         raise HTTPException(status_code=404, detail="Caso no encontrado")
 
     content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Archivo demasiado grande (máx 10MB)")
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Archivo demasiado grande (máx 25MB)")
 
     adj_id = uuid.uuid4()
     safe_name = f"{adj_id}_{file.filename}"

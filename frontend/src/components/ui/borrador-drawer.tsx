@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Edit3, Save, XCircle, Mail, Tag } from "lucide-react";
 import { api } from "@/store/authStore";
@@ -28,11 +28,32 @@ export function BorradorDrawer({ caso, onClose, onActualizado, onRechazado }: Pr
   const [editando, setEditando] = useState(false);
   const [saving, setSaving] = useState(false);
   const [rechazando, setRechazando] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const lastSavedTextRef = useRef(caso.borrador_respuesta || "");
+
+  useEffect(() => {
+    if (!editando) return;
+    if (texto === lastSavedTextRef.current) return;
+    setAutoSaveStatus("saving");
+    const handle = setTimeout(async () => {
+      try {
+        await api.put(`/casos/${caso.id}/borrador`, { texto });
+        lastSavedTextRef.current = texto;
+        onActualizado(caso.id, texto);
+        setAutoSaveStatus("saved");
+      } catch (e) {
+        console.error("Auto-save falló:", e);
+        setAutoSaveStatus("idle");
+      }
+    }, 2000);
+    return () => clearTimeout(handle);
+  }, [texto, editando, caso.id, onActualizado]);
 
   const guardar = async () => {
     setSaving(true);
     try {
       await api.put(`/casos/${caso.id}/borrador`, { texto });
+      lastSavedTextRef.current = texto;
       onActualizado(caso.id, texto);
       setEditando(false);
     } finally {
@@ -110,6 +131,11 @@ export function BorradorDrawer({ caso, onClose, onActualizado, onRechazado }: Pr
                 >
                   <Edit3 className="w-3.5 h-3.5" /> Editar
                 </button>
+              )}
+              {editando && autoSaveStatus !== "idle" && (
+                <span className="text-xs text-slate-500 italic">
+                  {autoSaveStatus === "saving" ? "Guardando..." : "✓ Guardado"}
+                </span>
               )}
             </div>
 

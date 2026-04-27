@@ -79,7 +79,7 @@ async def generar_borrador_con_ia(
             system=system,
         )
         texto = resp.content[0].text.strip()
-        return texto + AVISO_GENERICA
+        return texto
     except Exception as e:
         logger.warning(f"IA borrador fallido: {e}")
         return None
