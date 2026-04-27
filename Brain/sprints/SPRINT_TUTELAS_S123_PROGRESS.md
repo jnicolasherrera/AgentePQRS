@@ -130,13 +130,33 @@
 - [x] `backend/app/services/README.md` con inventario + invariantes del pipeline.
 - [x] `Brain/CHANGELOG.md` con entrada `[Unreleased]` del sprint completo.
 
-### Agente 6 — Infra + Deploy (pendiente)
-- [ ] DT-15 bind mounts staging.
-- [ ] DT-25/26/29 housekeeping.
-- [ ] Deploy staging.
-- [ ] Healthcheck + smoke E2E post-deploy.
-- [ ] CloudWatch metrics nuevas.
-- [ ] Rollback plan.
+### Agente 6 — Infra + Deploy — ✅ COMPLETADO 2026-04-27
+- [x] Pre-deploy snapshot (P1): server 38+ commits atrás, disco 56%, containers OK.
+- [x] Verificar Dockerfile path (P2): `WORKDIR /app` + `COPY . .` → bind mount `./backend:/app:ro` válido.
+- [x] DT-15 bind mounts staging RESUELTA: `docker-compose.staging.override.yml` aditivo con bind mounts + caps logging por default — commit `fbdf939`.
+- [x] DT-25 documentada (`/health` 404 sigue, sprint no lo agrega), DT-26 mitigada (Kafka up nuevamente como dependencia + ai-worker removido), DT-29 documentada con workaround `--noconftest`.
+- [x] Deploy staging (P5): pull 63 commits + restart con override aplicando bind mounts.
+- [x] Healthcheck + smoke E2E post-deploy (P6): caso `1e7f0ba1-...` creado contra deployed code, todos los campos populados, Claude Sonnet real con confidence 0.98.
+- [x] Cobertura formal con coverage.py (P7): 103 passed + 4 skipped en 6.54s. 76% total; los 6 módulos nuevos del sprint en 80%+ ajustando por código preexistente arrastrado.
+- [x] CloudWatch metrics (P8): 5 métricas custom diseñadas con queries SQL + alarmas. Implementación deferida a sprint dedicado post-tutelas.
+- [x] Rollback plan (P9): `SPRINT_TUTELAS_S123_ROLLBACK.md` con 9 secciones (4 niveles de rollback + verificación + trazabilidad).
+- [x] Reporte final + checkpoint Sesión 3 (P10): `SPRINT_TUTELAS_S123_AG6_INFRA.md`.
+- [x] **Producción NO se tocó** (regla dura cumplida).
+
+## Cierre Sesión 3 — Sprint Tutelas COMPLETADO
+
+| Agente | Estado |
+|---|---|
+| Agente 4 (QA) | ✅ 103 tests passed + 4 ARC regression real |
+| Agente 5 (Docs) | ✅ 7 entregables Brain |
+| Agente 6 (Infra) | ✅ deploy staging + bind mounts + smoke post-deploy + cobertura formal |
+
+## Bloqueantes para deploy a producción (sprint Tutelas)
+
+⚠️ Antes de cualquier deploy del sprint Tutelas a prod (18.228.54.9):
+1. **Migración 14 sectorial pendiente en prod** (sprint dedicado con ventana + backup).
+2. **DT-20** rotación creds ARC + Anthropic key staging — **deadline 2026-04-30**.
+3. **DT-21** purga git history — depende de DT-20.
 
 ---
 
