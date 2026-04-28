@@ -1,5 +1,6 @@
 import asyncio
 import asyncpg
+from asyncpg.exceptions import InterfaceError, ConnectionDoesNotExistError, PostgresConnectionError
 import redis.asyncio as redis
 import json
 import imaplib
@@ -381,10 +382,25 @@ async def save_adjuntos(conn, caso_id: uuid.UUID, adjuntos: list[dict]):
 
 # ── Worker principal ──────────────────────────────────────────────────────────
 
+async def _ensure_alive_connection(conn, dsn: str):
+    """DT-32: si conn está cerrada o es None, crea una nueva.
+    Retorna (conn, recreated_bool)."""
+    if conn is None or conn.is_closed():
+        if conn is not None:
+            try:
+                await conn.close()
+            except Exception:
+                pass
+        new_conn = await asyncpg.connect(dsn)
+        logger.info("🔄 DB connection (re)abierta")
+        return new_conn, True
+    return conn, False
+
+
 async def demo_worker():
     logger.info(f"🎯 [DEMO WORKER] Iniciando — bandeja: {GMAIL_USER} | reset: {RESET_MINUTES} min")
     r    = redis.from_url(REDIS_URL, decode_responses=True)
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn, _ = await _ensure_alive_connection(None, DATABASE_URL)
 
     while True:
         try:
@@ -550,6 +566,17 @@ async def demo_worker():
                 await conn.execute("DELETE FROM pqrs_casos WHERE id = ANY($1::uuid[])", ids)
                 logger.info(f"🗑️  Demo reset: {len(ids)} caso(s) eliminado(s) (>{RESET_MINUTES} min)")
 
+        except (InterfaceError, ConnectionDoesNotExistError, PostgresConnectionError, ConnectionResetError, OSError) as conn_err:
+            # DT-32: pool/conn muerta (típico tras restart de DB). Recrear.
+            logger.warning(f"⚠️ DB connection lost: {conn_err.__class__.__name__}: {conn_err}")
+            try:
+                conn, _ = await _ensure_alive_connection(conn, DATABASE_URL)
+            except Exception as recreate_err:
+                logger.error(f"❌ Failed to recreate DB conn: {recreate_err}")
+                await asyncio.sleep(10)
+                continue
+            await asyncio.sleep(2)
+            continue
         except Exception as e:
             logger.error(f"💥 Demo Worker error: {e}")
 

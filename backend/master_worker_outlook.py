@@ -4,6 +4,7 @@ import os
 import msal
 import requests
 import asyncpg
+from asyncpg.exceptions import InterfaceError, ConnectionDoesNotExistError, PostgresConnectionError
 import redis.asyncio as redis
 import pandas as pd
 from datetime import datetime, timedelta
@@ -141,10 +142,25 @@ class MultiTenantOutlookListener:
         headers = {"Authorization": f"Bearer {self._get_token()}", "Content-Type": "application/json"}
         requests.patch(f"https://graph.microsoft.com/v1.0/users/{email_buzon}/messages/{msg_id}", headers=headers, json={"isRead": True})
 
+async def _ensure_alive_connection(conn, dsn: str):
+    """DT-32: si conn está cerrada o es None, crea una nueva.
+    Retorna (conn, recreated_bool). Cierra la vieja si seguía abierta."""
+    if conn is None or conn.is_closed():
+        if conn is not None:
+            try:
+                await conn.close()
+            except Exception:
+                pass
+        new_conn = await asyncpg.connect(dsn)
+        logger.info("🔄 DB connection (re)abierta")
+        return new_conn, True
+    return conn, False
+
+
 async def master_worker():
     logger.info("🚀 [MASTER WORKER V2.1] Híbrido: Outlook/Zoho + SharePoint Storage...")
     r = redis.from_url(REDIS_URL, decode_responses=True)
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn, _ = await _ensure_alive_connection(None, DATABASE_URL)
     outlook = MultiTenantOutlookListener()
 
     while True:
@@ -359,6 +375,17 @@ async def master_worker():
 
             await check_tutela_alerts_2h(conn, r)
 
+        except (InterfaceError, ConnectionDoesNotExistError, PostgresConnectionError, ConnectionResetError, OSError) as conn_err:
+            # DT-32: pool/conn muerta (típico tras restart de DB). Recrear.
+            logger.warning(f"⚠️ DB connection lost: {conn_err.__class__.__name__}: {conn_err}")
+            try:
+                conn, _ = await _ensure_alive_connection(conn, DATABASE_URL)
+            except Exception as recreate_err:
+                logger.error(f"❌ Failed to recreate DB conn: {recreate_err}")
+                await asyncio.sleep(10)
+                continue
+            await asyncio.sleep(2)
+            continue
         except Exception as e:
             logger.error(f"💥 Master Worker Error: {e}")
             await asyncio.sleep(5)
