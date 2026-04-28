@@ -113,6 +113,13 @@ services:
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
       - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - ACTIVITY_FLAG=/tmp/master_worker_last_activity
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck_worker.py"]
+      interval: 60s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     depends_on:
       - postgres_v2
       - redis_v2
@@ -133,6 +140,13 @@ services:
       - DEMO_GMAIL_USER=democlasificador@gmail.com
       - DEMO_GMAIL_PASSWORD=${DEMO_GMAIL_PASSWORD:-}
       - DEMO_RESET_MINUTES=30
+      - ACTIVITY_FLAG=/tmp/demo_worker_last_activity
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck_worker.py"]
+      interval: 60s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     depends_on:
       - postgres_v2
       - redis_v2

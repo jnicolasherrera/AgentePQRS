@@ -142,6 +142,18 @@ class MultiTenantOutlookListener:
         headers = {"Authorization": f"Bearer {self._get_token()}", "Content-Type": "application/json"}
         requests.patch(f"https://graph.microsoft.com/v1.0/users/{email_buzon}/messages/{msg_id}", headers=headers, json={"isRead": True})
 
+_ACTIVITY_FLAG = os.environ.get("ACTIVITY_FLAG", "/tmp/master_worker_last_activity")
+
+
+def _touch_activity():
+    """DT-33: actualiza timestamp para healthcheck. No-crítico."""
+    try:
+        with open(_ACTIVITY_FLAG, "w") as f:
+            f.write(datetime.utcnow().isoformat())
+    except Exception:
+        pass
+
+
 async def _ensure_alive_connection(conn, dsn: str, force: bool = False):
     """DT-32: si conn está cerrada, es None, o force=True, crea una nueva.
 
@@ -172,6 +184,7 @@ async def master_worker():
     outlook = MultiTenantOutlookListener()
 
     while True:
+        _touch_activity()  # DT-33: marcar actividad antes de cada ciclo
         try:
             buzones = await conn.fetch("""
                 SELECT b.*, c.nombre AS cliente_nombre
