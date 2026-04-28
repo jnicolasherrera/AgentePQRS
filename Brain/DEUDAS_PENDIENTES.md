@@ -713,6 +713,76 @@ El script en sí parece publicar custom metrics a CloudWatch (`NAMESPACE="FlexPQ
 
 ---
 
+### DT-39 — Bridge cron `check_ingestion.sh` con falsos positivos en horarios de baja actividad
+
+**Severidad:** **MEDIA** (no causa daño grave, pero ejerce presión sobre prod con restarts innecesarios).
+
+**Detectado:** 2026-04-28 durante verificación de salud post-deploy fase A sprint Paola.
+
+**Estado actual:** El script `scripts/check_ingestion.sh` calcula:
+```sql
+SELECT EXTRACT(EPOCH FROM (NOW() - MAX(fecha_recibido)))/3600
+FROM pqrs_casos WHERE cliente_id = '...'
+```
+
+`fecha_recibido` es el **timestamp del email original** (cuando llegó al buzón Zoho/Outlook), no el de inserción en DB. En horarios sin emails nuevos (madrugada CO 01:00–07:00 ≈ 06:00–12:00 UTC), `MAX(fecha_recibido)` se queda en el último email del día anterior. Tras 4+ horas sin emails nuevos, el bridge dispara `ALERTA` y reinicia el master_worker aunque esté sano.
+
+**Evidencia (2026-04-28 madrugada UTC):**
+```
+[2026-04-28T06:00:01Z] ALERTA: cliente=effca814... sin casos nuevos hace 5h
+[2026-04-28T06:00:12Z] Restart pqrs_v2_master_worker aplicado automáticamente
+[2026-04-28T07:00:01Z] ALERTA: ... sin casos nuevos hace 6h
+[2026-04-28T07:00:12Z] Restart pqrs_v2_master_worker aplicado automáticamente
+... (7 ciclos consecutivos 06:00 → 12:00 UTC)
+[2026-04-28T12:00:11Z] Restart pqrs_v2_master_worker aplicado automáticamente
+```
+
+**7 restarts consecutivos** del master_worker en madrugada CO sin causa real. A las 18:09 UTC (13:09 CO) llegó un caso nuevo, el bridge dejó de alertar.
+
+**Riesgo:**
+- Restarts innecesarios. Cada uno expone potencialmente DT-32 (pool sin reconnect) si hay condición de carrera.
+- Logs de Docker se llenan con eventos de reinicio.
+- Falsa percepción de inestabilidad si alguien ve los logs sin contexto.
+
+**Plan de fix:**
+1. **Opción A (rápida)**: cambiar la query a `MAX(created_at)` en lugar de `MAX(fecha_recibido)`. Pero también queda viejo si simplemente no hay emails nuevos — solo ayuda en el caso edge donde emails llegan rápido pero el insert se demora. No resuelve madrugada.
+2. **Opción B (mejor)**: combinar con check de actividad del worker — verificar que hay logs recientes del master_worker, no solo casos en DB. Ejemplo:
+   ```bash
+   LAST_LOG=$(docker logs pqrs_v2_master_worker --since 30m 2>&1 | wc -l)
+   if [ "$LAST_LOG" -lt 5 ]; then
+       # solo entonces alertar
+   fi
+   ```
+3. **Opción C (pragmática)**: skipear el cron en horario madrugada CO (`if [ $(date -u +%H) -ge 6 ] && [ $(date -u +%H) -le 12 ]; then exit 0; fi`). Reduce falsos positivos pero deja una ventana ciega de 6h.
+4. **Opción D (real fix)**: implementar DT-33 (healthcheck funcional en master_worker) que sea independiente de la actividad de email. El bridge cron deja de tener sentido cuando el container puede ser marcado `unhealthy` por sí solo.
+
+**Owner:** mismo sprint que DT-32/DT-33/DT-34. Idealmente, **DT-33 reemplaza a este bridge cron** y DT-39 desaparece junto con DT-36.
+
+**Workaround inmediato (mientras tanto):** ninguno. Aceptar los restarts ruidosos de madrugada hasta sprint dedicado.
+
+---
+
+### DT-40 — Reporte de "cortesía a tutelas" sin evidencia empírica (esperando caso real)
+
+**Severidad:** **PENDIENTE confirmación**.
+
+**Reportado:** 2026-04-27 por Paola Lombana durante validación post-deploy sprint Paola: "se está enviando correo de cortesía al peticionante de tutelas, no debería".
+
+**Diagnóstico V1-V5 (2026-04-28):** sin evidencia empírica del patrón asumido. Detalle completo en `Brain/incidents/INC-2026-04-27_c_cortesia_tutela_diagnostic.md`.
+
+**Hipótesis pendientes:**
+- A) Memoria desactualizada (Paola recuerda comportamiento pre-`a5ae728` 8-abril).
+- B) Confusión con correo de respuesta del abogado vía `aprobar-lote` (que SÍ debe llegar al peticionante de tutela).
+- C) Flujo no detectado.
+
+**Acción pendiente:** esperar caso específico de Paola con message-id, asunto exacto, fecha. Sin esa info, fixear sería especular sobre datos que no existen.
+
+**NO se aplicó fix técnico**. Sprint dedicado cuando llegue caso específico.
+
+**Workaround operacional**: Paola pausando aprobaciones de tutelas hasta confirmación.
+
+---
+
 ## Estado consolidado post sprint Tutelas (2026-04-27)
 
 | DT | Título | Estado | Deadline / Trigger |
@@ -742,3 +812,5 @@ El script en sí parece publicar custom metrics a CloudWatch (`NAMESPACE="FlexPQ
 | DT-36 | `monitor_docker.sh` log path roto (`/var/log` no writeable) | Baja | sprint monitoreo (junto DT-32/33/34) |
 | DT-37 | 2 entry points UI para aprobar borrador (firma-modal + overlay) | Media | sprint frontend post-deploy |
 | DT-38 | Zoho REST API inline image no garantiza render en Outlook | Media | sprint dedicado próximos 14d |
+| DT-39 | Bridge cron `check_ingestion.sh` falsos positivos madrugada CO | Media | reemplazar con DT-33 healthcheck |
+| DT-40 | "Cortesía a tutelas" sin evidencia empírica (esperando caso Paola) | Pendiente | esperar caso real |
