@@ -47,7 +47,7 @@ async def test_master_worker_creates_conn_when_none():
 
     assert conn is fake_new_conn
     assert recreated is True
-    mock_connect.assert_awaited_once_with("stub-dsn")
+    mock_connect.assert_awaited_once_with("stub-dsn", command_timeout=30, timeout=10)
 
 
 @pytest.mark.asyncio
@@ -82,7 +82,7 @@ async def test_master_worker_recreates_closed_conn():
     assert conn is new_conn
     assert recreated is True
     closed_conn.close.assert_awaited_once()
-    mock_connect.assert_awaited_once_with("stub-dsn")
+    mock_connect.assert_awaited_once_with("stub-dsn", command_timeout=30, timeout=10)
 
 
 @pytest.mark.asyncio
@@ -113,6 +113,56 @@ async def test_master_worker_propagates_recreate_failure():
                new=AsyncMock(side_effect=ConnectionRefusedError("DB down"))):
         with pytest.raises(ConnectionRefusedError):
             await mw._ensure_alive_connection(None, "stub-dsn")
+
+
+@pytest.mark.asyncio
+async def test_master_worker_force_recreates_apparently_alive_conn():
+    """T8: force=True recrea aunque is_closed() retorne False.
+
+    Caso real: conn rota a nivel TCP/protocol (asyncpg no detectó). El except
+    del loop principal captura InterfaceError del fetch y llama al helper con
+    force=True para forzar la recreación.
+    """
+    import master_worker_outlook as mw
+
+    apparently_alive = MagicMock()
+    apparently_alive.is_closed = MagicMock(return_value=False)  # mentira: conn rota TCP
+    apparently_alive.close = AsyncMock()
+
+    new_conn = MagicMock()
+    new_conn.is_closed = MagicMock(return_value=False)
+
+    with patch("master_worker_outlook.asyncpg.connect", new=AsyncMock(return_value=new_conn)) as mock_connect:
+        conn, recreated = await mw._ensure_alive_connection(apparently_alive, "stub-dsn", force=True)
+
+    assert conn is new_conn
+    assert recreated is True
+    apparently_alive.close.assert_awaited_once()
+    mock_connect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_master_worker_passes_timeouts_on_connect():
+    """T9: las nuevas conexiones se crean con command_timeout=30 + timeout=10."""
+    import master_worker_outlook as mw
+
+    new_conn = MagicMock(is_closed=MagicMock(return_value=False))
+    with patch("master_worker_outlook.asyncpg.connect", new=AsyncMock(return_value=new_conn)) as mock_connect:
+        await mw._ensure_alive_connection(None, "stub-dsn")
+
+    mock_connect.assert_awaited_once_with("stub-dsn", command_timeout=30, timeout=10)
+
+
+@pytest.mark.asyncio
+async def test_demo_worker_passes_timeouts_on_connect():
+    """T9 demo: idem para demo_worker."""
+    import demo_worker as dw
+
+    new_conn = MagicMock(is_closed=MagicMock(return_value=False))
+    with patch("demo_worker.asyncpg.connect", new=AsyncMock(return_value=new_conn)) as mock_connect:
+        await dw._ensure_alive_connection(None, "stub-dsn")
+
+    mock_connect.assert_awaited_once_with("stub-dsn", command_timeout=30, timeout=10)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

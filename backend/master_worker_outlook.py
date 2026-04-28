@@ -142,16 +142,24 @@ class MultiTenantOutlookListener:
         headers = {"Authorization": f"Bearer {self._get_token()}", "Content-Type": "application/json"}
         requests.patch(f"https://graph.microsoft.com/v1.0/users/{email_buzon}/messages/{msg_id}", headers=headers, json={"isRead": True})
 
-async def _ensure_alive_connection(conn, dsn: str):
-    """DT-32: si conn está cerrada o es None, crea una nueva.
-    Retorna (conn, recreated_bool). Cierra la vieja si seguía abierta."""
-    if conn is None or conn.is_closed():
+async def _ensure_alive_connection(conn, dsn: str, force: bool = False):
+    """DT-32: si conn está cerrada, es None, o force=True, crea una nueva.
+
+    `force=True` se usa desde el except del loop tras detectar InterfaceError —
+    necesario porque is_closed() puede retornar False sobre conexión rota a
+    nivel TCP/protocol. Sin force, la conn aparentemente "viva" pero rota se
+    preservaría y el bucle reincidiría.
+
+    timeout=10 al connect setup; command_timeout=30 limita queries individuales.
+
+    Retorna (conn, recreated_bool)."""
+    if conn is None or conn.is_closed() or force:
         if conn is not None:
             try:
                 await conn.close()
             except Exception:
                 pass
-        new_conn = await asyncpg.connect(dsn)
+        new_conn = await asyncpg.connect(dsn, command_timeout=30, timeout=10)
         logger.info("🔄 DB connection (re)abierta")
         return new_conn, True
     return conn, False
@@ -375,11 +383,12 @@ async def master_worker():
 
             await check_tutela_alerts_2h(conn, r)
 
-        except (InterfaceError, ConnectionDoesNotExistError, PostgresConnectionError, ConnectionResetError, OSError) as conn_err:
+        except (InterfaceError, ConnectionDoesNotExistError, PostgresConnectionError, ConnectionResetError, OSError, asyncio.TimeoutError) as conn_err:
             # DT-32: pool/conn muerta (típico tras restart de DB). Recrear.
+            # force=True porque is_closed() puede ser False sobre conn rota TCP.
             logger.warning(f"⚠️ DB connection lost: {conn_err.__class__.__name__}: {conn_err}")
             try:
-                conn, _ = await _ensure_alive_connection(conn, DATABASE_URL)
+                conn, _ = await _ensure_alive_connection(conn, DATABASE_URL, force=True)
             except Exception as recreate_err:
                 logger.error(f"❌ Failed to recreate DB conn: {recreate_err}")
                 await asyncio.sleep(10)
