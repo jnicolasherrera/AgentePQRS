@@ -4,6 +4,7 @@ import os
 import msal
 import requests
 import asyncpg
+from asyncpg.exceptions import InterfaceError, ConnectionDoesNotExistError, PostgresConnectionError
 import redis.asyncio as redis
 import pandas as pd
 from datetime import datetime, timedelta
@@ -141,13 +142,51 @@ class MultiTenantOutlookListener:
         headers = {"Authorization": f"Bearer {self._get_token()}", "Content-Type": "application/json"}
         requests.patch(f"https://graph.microsoft.com/v1.0/users/{email_buzon}/messages/{msg_id}", headers=headers, json={"isRead": True})
 
+_ACTIVITY_FLAG = os.environ.get("ACTIVITY_FLAG", "/tmp/master_worker_last_activity")
+
+
+def _touch_activity():
+    """DT-33: actualiza timestamp para healthcheck. No-crítico al runtime —
+    si falla (filesystem lleno, permisos), logueamos warning y seguimos.
+    Healthcheck eventualmente marcará unhealthy si el flag queda stale."""
+    try:
+        with open(_ACTIVITY_FLAG, "w") as f:
+            f.write(datetime.utcnow().isoformat())
+    except Exception as e:
+        logger.warning(f"⚠️ _touch_activity failed: {e}")
+
+
+async def _ensure_alive_connection(conn, dsn: str, force: bool = False):
+    """DT-32: si conn está cerrada, es None, o force=True, crea una nueva.
+
+    `force=True` se usa desde el except del loop tras detectar InterfaceError —
+    necesario porque is_closed() puede retornar False sobre conexión rota a
+    nivel TCP/protocol. Sin force, la conn aparentemente "viva" pero rota se
+    preservaría y el bucle reincidiría.
+
+    timeout=10 al connect setup; command_timeout=30 limita queries individuales.
+
+    Retorna (conn, recreated_bool)."""
+    if conn is None or conn.is_closed() or force:
+        if conn is not None:
+            try:
+                await conn.close()
+            except Exception:
+                pass
+        new_conn = await asyncpg.connect(dsn, command_timeout=30, timeout=10)
+        logger.info("🔄 DB connection (re)abierta")
+        return new_conn, True
+    return conn, False
+
+
 async def master_worker():
     logger.info("🚀 [MASTER WORKER V2.1] Híbrido: Outlook/Zoho + SharePoint Storage...")
     r = redis.from_url(REDIS_URL, decode_responses=True)
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn, _ = await _ensure_alive_connection(None, DATABASE_URL)
     outlook = MultiTenantOutlookListener()
 
     while True:
+        _touch_activity()  # DT-33: marcar actividad antes de cada ciclo
         try:
             buzones = await conn.fetch("""
                 SELECT b.*, c.nombre AS cliente_nombre
@@ -359,6 +398,18 @@ async def master_worker():
 
             await check_tutela_alerts_2h(conn, r)
 
+        except (InterfaceError, ConnectionDoesNotExistError, PostgresConnectionError, ConnectionResetError, OSError, asyncio.TimeoutError) as conn_err:
+            # DT-32: pool/conn muerta (típico tras restart de DB). Recrear.
+            # force=True porque is_closed() puede ser False sobre conn rota TCP.
+            logger.warning(f"⚠️ DB connection lost: {conn_err.__class__.__name__}: {conn_err}")
+            try:
+                conn, _ = await _ensure_alive_connection(conn, DATABASE_URL, force=True)
+            except Exception as recreate_err:
+                logger.error(f"❌ Failed to recreate DB conn: {recreate_err}")
+                await asyncio.sleep(10)
+                continue
+            await asyncio.sleep(2)
+            continue
         except Exception as e:
             logger.error(f"💥 Master Worker Error: {e}")
             await asyncio.sleep(5)
