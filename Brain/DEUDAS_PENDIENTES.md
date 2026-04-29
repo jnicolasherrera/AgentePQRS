@@ -243,6 +243,8 @@ Patrón de rotación sin downtime documentado en `fixes/HARDENING_AWS_ABRIL_2026
 
 ### DT-19 — Drift detection periódico staging vs prod vs repo
 
+> **PRIORIDAD ELEVADA 2026-04-29 (Media → ALTA)** — durante el deploy del Sprint fix de fondo (PR #7) se descubrió drift productivo crítico en `docker-compose.yml` de prod EC2 (4 cambios legítimos no commiteados desde abril 2026: ports binding `127.0.0.1:` hardening, `DEMO_RESET_MINUTES=1440`, vars `MINIO_*` del rescue 16-abr, `DEMO_GMAIL_USER/PASSWORD` en backend). El pull rechazó preventivamente y exigió resolver. Si se hubiera hecho `git checkout --` o stash sin investigar, **se habría abierto brecha de seguridad** (ports expuestos públicamente) y roto funcionalidad demo. Audit trail local en prod: branch `prod-drift-2026-04-29` + commit `2331581` + merge `e930a4f` (no pusheados a origin). Plan: cherry-pick formal del drift al repo en sprint dedicado próximos 14 días. Ver `Brain/incidents/INC-2026-04-29_drift_docker_compose_prod.md`.
+
 **Origen:** sesión del 2026-04-23 detectó drift severo entre 3 fuentes (prod 18.228, staging 15.229, SQLs del repo). Ver `Brain/sprints/SPRINT_TUTELAS_S123_BLOQUEANTE_DRIFT_REPO.md`.
 
 **Severidad:** Media — no bloqueante mientras nadie deploye, pero se van acumulando cambios silenciosos cada vez que alguien toca prod directo.
@@ -563,6 +565,8 @@ Origen: incidente documentado en `Brain/incidents/INC-2026-04-27_master_worker_p
 
 ### DT-32 — Pool asyncpg sin reconnect en `master_worker_outlook.py`
 
+> **RESUELTA 2026-04-29** — Sprint fix de fondo PR #7 (commit squash 74aa53d). Implementado `_ensure_alive_connection()` helper en `master_worker_outlook.py` y `demo_worker.py`: try/except sobre `(InterfaceError, ConnectionDoesNotExistError, PostgresConnectionError, ConnectionResetError, OSError)` con backoff y recreate del pool. `command_timeout=30s` + `timeout=10s` agregados. Smoke staging PASS (docker restart pqrs_v2_db → secuencia "🔄 (re)abierta → ⚠️ DB connection lost → 🔄 (re)abierta"). Deploy prod 2026-04-29 verde. 10/10 tests verdes en `backend/tests/test_dt32_reconnect.py`.
+
 **Severidad:** **CRÍTICA**. Es la raíz del incidente INC-2026-04-27.
 
 **Estado actual:** `backend/master_worker_outlook.py` línea 149 hace `conn = await asyncpg.connect(DATABASE_URL)` y línea 152 `pool = await asyncpg.create_pool(...)` una sola vez al arrancar. El loop principal (línea 155 `while True:`) no tiene manejo de excepciones que detecte sockets cerrados ni recree el pool. El handler captura la excepción genérica pero solo loguea `str(e)` ("connection is closed") y reintenta sobre el mismo handle muerto.
@@ -582,6 +586,8 @@ Origen: incidente documentado en `Brain/incidents/INC-2026-04-27_master_worker_p
 
 ### DT-33 — Healthcheck funcional faltante en workers
 
+> **RESUELTA 2026-04-29** — Sprint fix de fondo PR #7. `backend/healthcheck_worker.py` chequea (1) activity flag `<HC_MAX_INACTIVITY_MINUTES` default 10min y (2) `SELECT 1` contra DB. `healthcheck:` block agregado en `docker-compose.yml` para `master_worker_v2` y `demo_worker_v2` (interval 60s, timeout 10s, start_period 30s, retries 3). Smoke staging PASS (SIGSTOP + touch -d 15min ago → marcó `(unhealthy)` en 105s con motivo `"UNHEALTHY: last activity 15.1min ago"` + FailingStreak=3; recovery a `(healthy)` en 10s tras SIGCONT). Deploy prod 2026-04-29 verde. 6/6 tests en `backend/tests/test_dt33_healthcheck.py`.
+
 **Severidad:** **ALTA**.
 
 **Estado actual:** `pqrs_v2_master_worker` reportaba `Up 13 days` durante el incidente cuando en realidad llevaba ~12 días procesando 0 casos. Docker reporta el container como "running" mientras el proceso esté vivo, sin validar trabajo útil.
@@ -597,6 +603,8 @@ Origen: incidente documentado en `Brain/incidents/INC-2026-04-27_master_worker_p
 ---
 
 ### DT-34 — Alerting de "casos no ingestados" faltante
+
+> **RESUELTA 2026-04-29** (pendiente verificación 7d email alerting) — Sprint fix de fondo PR #7 (commit `5abe2bc`). Implementado `scripts/check_ingestion_v2.sh` con state machine OK/WARNING/CRITICAL y email alerting vía SMTP. Credenciales SMTP por tenant en AWS SSM Parameter Store (`/flexpqr/alerts/<tenant_key>/smtp_user|smtp_password|smtp_host|destinatario`). Tenant ARC configurado: remitente `pqrs@arcsas.com.co` via `smtppro.zoho.com:465` → destinatario `nicolas.herrera@flexfintech.com`. Smoke prod 2026-04-29 con `THRESHOLD_HOURS=0` → email recibido OK. Cron horario activado en prod EC2 (`TENANT_KEY=arc /home/ubuntu/check_ingestion_v2.sh`). IAM role `flexpqr-ec2-s3-backup` con policy `flexpqr-alerts-ssm-read` (wildcard `/flexpqr/alerts/*`). v1 `check_ingestion.sh` se mantiene en disco 7 días como rollback rápido.
 
 **Severidad:** **ALTA**. Es la causa de que el incidente durara 12 días sin detección.
 
@@ -714,6 +722,8 @@ El script en sí parece publicar custom metrics a CloudWatch (`NAMESPACE="FlexPQ
 ---
 
 ### DT-39 — Bridge cron `check_ingestion.sh` con falsos positivos en horarios de baja actividad
+
+> **MITIGADA 2026-04-28 + Reemplazada 2026-04-29** — Paso 0 mitigación: bridge cron staging deshabilitado (commit `8e5d7b8`). Paso 1 reemplazo: `check_ingestion_v2.sh` con state machine OK/WARNING/CRITICAL y umbrales separados (`THRESHOLD_HOURS=2` warning, `MAX_HOURS_BEFORE_RESTART=4` critical) reemplaza al v1 en prod EC2 (commit `5abe2bc`). Falsos positivos siguen posibles en madrugada CO si la métrica `MAX(fecha_recibido)` se queda atrás, pero ahora separa warning visible (email) de critical (restart) en vez de auto-restart silencioso.
 
 **Severidad:** **MEDIA** (no causa daño grave, pero ejerce presión sobre prod con restarts innecesarios).
 
