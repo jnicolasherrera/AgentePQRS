@@ -146,12 +146,14 @@ _ACTIVITY_FLAG = os.environ.get("ACTIVITY_FLAG", "/tmp/master_worker_last_activi
 
 
 def _touch_activity():
-    """DT-33: actualiza timestamp para healthcheck. No-crítico."""
+    """DT-33: actualiza timestamp para healthcheck. No-crítico al runtime —
+    si falla (filesystem lleno, permisos), logueamos warning y seguimos.
+    Healthcheck eventualmente marcará unhealthy si el flag queda stale."""
     try:
         with open(_ACTIVITY_FLAG, "w") as f:
             f.write(datetime.utcnow().isoformat())
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"⚠️ _touch_activity failed: {e}")
 
 
 async def _ensure_alive_connection(conn, dsn: str, force: bool = False):
