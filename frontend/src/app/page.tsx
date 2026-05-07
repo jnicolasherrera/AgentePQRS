@@ -46,7 +46,7 @@ export default function DashboardPage() {
     }
   }, [mounted, user?.debe_cambiar_password]);
 
-  const isAbogado = user?.rol === "analista";
+  const isAbogado = user?.rol === "analista" || user?.rol === "abogado";
 
   const tabs = isAbogado
     ? ["Dashboard", "Mis Casos", "Enviados", "Configuración"]

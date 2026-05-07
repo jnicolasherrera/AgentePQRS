@@ -1,6 +1,7 @@
 # Variables de entorno — NUNCA subir
 .env
 .env.*
+!.env.example
 
 # Archivos pesados
 *.zip
@@ -30,3 +31,13 @@ uploads/
 # Archivos locales
 *.bak
 *.bak2
+
+# Backups locales del Brain y snapshots
+Brain_backup_*/
+brain_snapshots/
+Brain/.obsidian/
+
+# Backups locales del Brain y snapshots
+Brain_backup_*/
+brain_snapshots/
+Brain/.obsidian/

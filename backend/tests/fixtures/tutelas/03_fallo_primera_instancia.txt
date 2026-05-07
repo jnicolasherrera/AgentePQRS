@@ -1,0 +1,58 @@
+# FIXTURE SINTÉTICO — NO es oficio real. Ver DT-18.
+# Marker: SYNTHETIC_FIXTURE_V1
+# Objetivo: FALLO_PRIMERA con sentido CONCEDIDA. Sin plazo de informe (ya rindió).
+# Expectativa: schema tolera ausencia de plazo_informe_horas (el campo puede quedar
+#              en el default 48 + _confidence bajo, y el flag tipo_actuacion correcto).
+
+SYNTHETIC_FIXTURE_V1
+
+REPÚBLICA DE COLOMBIA
+RAMA JUDICIAL
+JUZGADO SIETE LABORAL DEL CIRCUITO DE CALI
+
+Referencia: Sentencia de Tutela de Primera Instancia
+Expediente: 76001-3105-007-2026-00089-00
+Accionante: Persona ficticia para pruebas
+Accionado: Entidad de servicios públicos
+
+SENTENCIA DE TUTELA
+Cali, veinticuatro (24) de abril de dos mil veintiséis (2026)
+
+El JUZGADO SIETE LABORAL DEL CIRCUITO DE CALI, en ejercicio de su competencia constitucional, procede a dictar sentencia de primera instancia en la acción de tutela de la referencia.
+
+ANTECEDENTES:
+
+1. El accionante presentó la acción de tutela el día catorce (14) de abril de 2026.
+2. La entidad accionada rindió informe el día dieciséis (16) de abril de 2026, oponiéndose a las pretensiones.
+3. Se revisó el expediente completo y las pruebas aportadas.
+
+CONSIDERACIONES:
+
+De conformidad con el análisis probatorio y jurídico, el despacho encuentra que la entidad accionada vulneró el derecho fundamental a la continuidad del servicio público esencial y al debido proceso administrativo.
+
+FALLO:
+
+PRIMERO: TUTELAR los derechos fundamentales invocados por el accionante.
+
+SEGUNDO: ORDENAR a la entidad accionada que, en el término de cuarenta y ocho (48) horas siguientes a la notificación de este fallo, restablezca el servicio público y expida la certificación solicitada con la información completa.
+
+TERCERO: PREVENIR a la entidad accionada que, en casos similares futuros, adopte los procedimientos necesarios para evitar la repetición de la conducta vulneradora.
+
+CUARTO: Contra la presente sentencia procede el recurso de IMPUGNACIÓN dentro de los tres (3) días siguientes a la notificación, de conformidad con el artículo 31 del Decreto 2591 de 1991.
+
+NOTIFÍQUESE Y CÚMPLASE
+
+[Firma sintética - fixture de prueba]
+Juez Séptimo Laboral del Circuito
+
+Notas del fixture:
+- Marker: SYNTHETIC_FIXTURE_V1.
+- tipo_actuacion esperado: FALLO_PRIMERA.
+- sentido esperado: CONCEDIDA (tutela los derechos).
+- NO hay plazo de informe (ya se rindió en el trámite). El schema debe tolerar
+  esta ausencia sin romper: plazo_informe_horas puede quedar en default 48 con
+  _confidence bajo + _requiere_revision_humana, o simplemente no extraerse.
+- Hay un plazo de 48h para cumplimiento del fallo (distinto del plazo de informe).
+  Es una orden operativa, no un plazo procesal para rendir informe.
+- Plazo de impugnación: 3 días.
+- derechos_invocados: continuidad servicio público, debido proceso administrativo.

@@ -37,7 +37,7 @@ async def _stream_generator(request: Request, tenant_id: str, user_id: str, role
                 raw = message["data"]
                 data = json.loads(raw)
 
-                if role == "analista":
+                if role in ("analista", "abogado"):
                     if data.get("asignado_a") != user_id:
                         continue
 
