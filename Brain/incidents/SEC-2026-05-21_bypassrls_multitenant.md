@@ -62,7 +62,19 @@ OK (filtran por cliente_id/rol): `stats.py`, `casos.py /enviados/historial`, `/m
 🔴 Vulnerables (IDOR — por id, sin verificar tenant):
 - `ai.py`: `GET /extract/{id}`, `POST /draft/{id}` — **REMEDIADO 2026-05-21** (filtro `cliente_id`).
 - `casos.py`: `GET /borrador/pendientes`, `GET /{id}`, `PATCH /{id}`, `PUT /{id}/borrador`,
-  rechazar borrador, y los JOIN/acciones por caso_id — **PENDIENTES**.
+  `POST /{id}/rechazar-borrador` — **REMEDIADO 2026-05-21** (opción A: super_admin ve todos,
+  resto scoped a su tenant; `WHERE id=$1 AND (es_super OR cliente_id=$tenant)`).
+
+## Estado de remediación (2026-05-21)
+
+✅ **7 endpoints IDOR cerrados** (ai.py ×2, casos.py ×5), test-backed (suite 88 verde
++ probe de aislamiento: usuario no-super de A ya no alcanza casos de B; super_admin sí).
+
+⏳ **Pendiente (defensa en profundidad, mayor):** evaluar conectar el backend con un rol
+**sin BYPASSRLS** para que las políticas RLS sean una segunda barrera real (hoy el filtro
+explícito es la única). Requiere manejar super_admin vía rol/flag aparte. + auditar el
+resto de tablas tenant-scoped (pqrs_adjuntos, comentarios) por acceso directo. + validar
+todo en **staging** con los 3 tenants reales antes de prod.
 
 ## Por qué NO se parchea a ciegas
 
