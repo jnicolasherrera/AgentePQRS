@@ -188,6 +188,27 @@ AgentePQRS/
 
 ---
 
+## Validaciones en vivo (2026-05-21, post Fase 1)
+
+Al verificar contra el código real (no solo los docs del Brain), se corrigieron
+falsos positivos del análisis:
+
+- **DT-29 (storage_engine cuelga pytest) → OBSOLETO.** El `Minio()` actual ya es
+  lazy (no conecta al construir). El test suite corre en ~5s: **186 passed, 5 skipped, 1 failed**.
+- **Único test que falla:** `test_ai_worker.py` mockea `worker_ai_consumer.insert_pqrs_caso`
+  (atributo inexistente) — test desactualizado contra un worker **legacy** (no-entrypoint).
+  Refuerza la deprecación de los legacy (LEGACY_WORKERS.md) en Fase 3.
+- **C2 (`time.sleep` en async) → real pero NO es one-liner:** `zoho_engine.py` usa
+  `requests` (sync) dentro del worker async; cada `requests.post` ya bloquea el loop.
+  El fix correcto es envolver en `run_in_executor` o pasar a `httpx` async — refactor
+  dedicado, no quick fix.
+- **`.env` NO está en git** (verificado, 0 commits). El riesgo de secretos está en
+  SQLs/compose/.py versionados (S1-S3), no en el `.env`.
+
+**Implicancia de método:** la Fase 2 (código/RLS) toca runtime de producción y debe
+hacerse **test-backed** — rebuild local + pytest, o staging — nunca a ciegas. Hay
+baseline verde (186) sobre el cual apoyarse.
+
 ## Riesgo y orden
 
 - Fase 0 y 1 son **bajo riesgo / alto valor** — empezar por ahí.
