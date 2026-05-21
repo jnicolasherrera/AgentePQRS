@@ -111,12 +111,23 @@ async def listar_pendientes(
     current_user: UserInToken = Depends(get_current_user),
     conn=Depends(get_db_connection),
 ) -> List[Dict[str, Any]]:
-    rows = await conn.fetch(
-        """SELECT id, email_origen, asunto, tipo_caso, nivel_prioridad,
-                  fecha_recibido, borrador_respuesta, problematica_detectada
-           FROM pqrs_casos WHERE borrador_estado = 'PENDIENTE'
-           ORDER BY fecha_recibido ASC LIMIT 100""",
-    )
+    # SEC-2026-05-21: scope por tenant (super_admin ve todos). Antes devolvía
+    # borradores pendientes de TODOS los tenants (leak C1).
+    if current_user.role == "super_admin":
+        rows = await conn.fetch(
+            """SELECT id, email_origen, asunto, tipo_caso, nivel_prioridad,
+                      fecha_recibido, borrador_respuesta, problematica_detectada
+               FROM pqrs_casos WHERE borrador_estado = 'PENDIENTE'
+               ORDER BY fecha_recibido ASC LIMIT 100""",
+        )
+    else:
+        rows = await conn.fetch(
+            """SELECT id, email_origen, asunto, tipo_caso, nivel_prioridad,
+                      fecha_recibido, borrador_respuesta, problematica_detectada
+               FROM pqrs_casos WHERE borrador_estado = 'PENDIENTE' AND cliente_id = $1
+               ORDER BY fecha_recibido ASC LIMIT 100""",
+            uuid.UUID(current_user.tenant_uuid),
+        )
     return [
         {
             "id": str(r["id"]),
@@ -252,8 +263,10 @@ async def get_caso_detalle(
                   c.asignado_a, u.nombre AS asignado_nombre
            FROM pqrs_casos c
            LEFT JOIN usuarios u ON u.id = c.asignado_a
-           WHERE c.id = $1""",
+           WHERE c.id = $1 AND ($2 OR c.cliente_id = $3)""",
         uuid.UUID(caso_id),
+        current_user.role == "super_admin",
+        uuid.UUID(current_user.tenant_uuid),
     )
     if not caso:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
@@ -361,8 +374,13 @@ async def update_caso(
         return {"status": "ok", "message": "No changes"}
     updates.append(f"updated_at = NOW()")
     values.append(uuid.UUID(caso_id))
+    idx_id = len(values)
+    # SEC-2026-05-21: scope por tenant (super_admin opera cualquiera).
+    values.append(current_user.role == "super_admin")
+    values.append(uuid.UUID(current_user.tenant_uuid))
     updated_id = await conn.fetchval(
-        f"UPDATE pqrs_casos SET {', '.join(updates)} WHERE id = ${len(values)} RETURNING id", *values)
+        f"UPDATE pqrs_casos SET {', '.join(updates)} "
+        f"WHERE id = ${idx_id} AND (${idx_id+1} OR cliente_id = ${idx_id+2}) RETURNING id", *values)
     if not updated_id:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
     if "asignado_a" in payload:
@@ -387,8 +405,11 @@ async def editar_borrador(
     conn=Depends(get_db_connection),
 ):
     caso = await conn.fetchrow(
-        "SELECT id, cliente_id, tipo_caso, borrador_respuesta FROM pqrs_casos WHERE id = $1",
+        "SELECT id, cliente_id, tipo_caso, borrador_respuesta FROM pqrs_casos "
+        "WHERE id = $1 AND ($2 OR cliente_id = $3)",
         uuid.UUID(caso_id),
+        current_user.role == "super_admin",
+        uuid.UUID(current_user.tenant_uuid),
     )
     if not caso:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
@@ -429,8 +450,16 @@ async def rechazar_borrador(
     current_user: UserInToken = Depends(get_current_user),
     conn=Depends(get_db_connection),
 ):
-    await conn.execute(
-        "UPDATE pqrs_casos SET borrador_estado = 'RECHAZADO' WHERE id = $1", uuid.UUID(caso_id))
+    # SEC-2026-05-21: scope por tenant; 404 si el caso no pertenece (no afecta filas).
+    rechazado = await conn.fetchval(
+        "UPDATE pqrs_casos SET borrador_estado = 'RECHAZADO' "
+        "WHERE id = $1 AND ($2 OR cliente_id = $3) RETURNING id",
+        uuid.UUID(caso_id),
+        current_user.role == "super_admin",
+        uuid.UUID(current_user.tenant_uuid),
+    )
+    if not rechazado:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
     await conn.execute(
         "INSERT INTO audit_log_respuestas (caso_id, usuario_id, accion) VALUES ($1,$2,'RECHAZADO')",
         uuid.UUID(caso_id), uuid.UUID(current_user.usuario_id),
