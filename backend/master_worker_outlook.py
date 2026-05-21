@@ -32,8 +32,7 @@ from app.services.zoho_engine import ZohoServiceV2
 from app.services.sharepoint_engine import SharePointEngineV2
 from app.services.plantilla_engine import generar_borrador_para_caso
 from app.services.clasificador import parece_pqrs
-
-TENANT_ABOGADOS_RECOVERY = "effca814-b0b5-4329-96be-186c0333ad4b"
+from app.constants import TENANT_ABOGADOS_RECOVERY
 
 _RE_PREFIX = re.compile(r'^(?:(?:[a-z]{1,4}\s*-\s*)+)?(?:re|fw|fwd|rv|rta|r)\s*:\s*', re.IGNORECASE)
 _RE_RADICADO = re.compile(r'PQRS-\d{4}-[A-F0-9]{6,8}', re.IGNORECASE)

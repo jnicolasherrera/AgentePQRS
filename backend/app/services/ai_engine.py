@@ -58,7 +58,7 @@ Señales contextuales:
 - Usa el tool clasificar_pqr para responder."""
 
 # IDs de Clientes Especiales
-TENANT_RECOVERY = "effca814-b0b5-4329-96be-186c0333ad4b"
+from app.constants import TENANT_ABOGADOS_RECOVERY as TENANT_RECOVERY
 
 # Diccionario de Inteligencia Legal para Abogados Recovery (Option B)
 # Estas plantillas son inmutables y basadas en la normativa colombiana actual (Ley 2157 de 2021)
