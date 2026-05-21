@@ -46,6 +46,24 @@ por `cliente_id`; el riesgo está en los que no, y en accesos por id conocido.
    en profundidad real (cuidado: super_admin necesita ver todos → vía rol/flag aparte).
 5. **Validar en staging** con los 3 tenants reales antes de tocar prod.
 
+## Evidencia (probada en DB local, 2026-05-21)
+
+Creado un 2º tenant + caso. Como `pqrs_admin` (rol del backend), con
+`set_config('app.current_tenant_id', tenant_A)`:
+- casos visibles = 19 (18 de A + **1 de B**) → ve el caso confidencial de B.
+- `WHERE id=<caso_B>` → 1 fila (leak); `WHERE id=<caso_B> AND cliente_id=tenant_A` → 0 (aísla).
+
+Confirma: RLS no aísla con el rol del backend; el filtro explícito `cliente_id` sí.
+
+## Auditoría de endpoints (pqrs_casos)
+
+OK (filtran por cliente_id/rol): `stats.py`, `casos.py /enviados/historial`, `/metricas/respuestas`.
+
+🔴 Vulnerables (IDOR — por id, sin verificar tenant):
+- `ai.py`: `GET /extract/{id}`, `POST /draft/{id}` — **REMEDIADO 2026-05-21** (filtro `cliente_id`).
+- `casos.py`: `GET /borrador/pendientes`, `GET /{id}`, `PATCH /{id}`, `PUT /{id}/borrador`,
+  rechazar borrador, y los JOIN/acciones por caso_id — **PENDIENTES**.
+
 ## Por qué NO se parchea a ciegas
 
 Agregar filtros sin distinguir endpoints super_admin rompería la visibilidad global
