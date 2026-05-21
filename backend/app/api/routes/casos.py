@@ -18,19 +18,7 @@ from app.core.db import get_db_connection
 from app.core.security import get_current_user, UserInToken, verify_password
 from app.services.storage_engine import get_download_url, upload_file, download_file, client as minio_client, BUCKET_NAME
 from app.services.zoho_engine import ZohoServiceV2
-
-
-def _md_to_html(text: str) -> str:
-    import re
-    text = re.sub(r'^### (.+)$', r'<h4 style="margin:12px 0 4px">\1</h4>', text, flags=re.MULTILINE)
-    text = re.sub(r'^## (.+)$',  r'<h3 style="margin:14px 0 6px">\1</h3>', text, flags=re.MULTILINE)
-    text = re.sub(r'^# (.+)$',   r'<h2 style="margin:16px 0 8px">\1</h2>', text, flags=re.MULTILINE)
-    text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
-    text = re.sub(r'__(.+?)__',     r'<strong>\1</strong>', text)
-    text = re.sub(r'\*([^*\n]+?)\*', r'<em>\1</em>', text)
-    text = re.sub(r'_([^_\n]+?)_',   r'<em>\1</em>', text)
-    text = text.replace("\n", "<br>")
-    return text
+from app.services.email_utils import md_to_html as _md_to_html
 
 
 _FIRMA_CID = "firma_arc"
