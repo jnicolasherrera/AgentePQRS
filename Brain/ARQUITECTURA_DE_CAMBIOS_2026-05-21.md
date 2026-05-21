@@ -209,6 +209,23 @@ falsos positivos del análisis:
 hacerse **test-backed** — rebuild local + pytest, o staging — nunca a ciegas. Hay
 baseline verde (186) sobre el cual apoyarse.
 
+## Progreso Fase 2 local (2026-05-21, rama `cleanup/fase1-estructura-2026-05-21`)
+
+Hechos test-backed (rebuild local + pytest, suite 88 verde):
+- ✅ **C7** — constante `TENANT_ABOGADOS_RECOVERY` centralizada en `app/constants.py` (commit `bc1d629`).
+- ✅ **C5** — `_md_to_html` dedup → `app/services/email_utils.py` (firmas NO unificadas) (commit `45512b2`).
+- ✅ **C3** — manejo del refresh_token Zoho revocado sin crash-loop + excepciones tipadas
+  (`ZohoAuthError`/`ZohoRateLimitError`) + test de regresión del bug de la caída (commit `49425c5`).
+- ✅ Corrección de Fase 1: 6 `test_*.py` mal clasificados → `backend/scripts/manual/`.
+
+Pendiente de Fase 2 (requieren más que local):
+- **C2** (`time.sleep`→async): refactor mayor, toda la clase `ZohoServiceV2` es sync (`requests`) en worker async.
+- **C1** (`azure_*`→`oauth_*`): migración a DB de prod.
+- **RLS** (filtro explícito de tenant): staging + tests de aislamiento.
+
+> Nota: C3 protege contra futuras revocaciones de token **solo después de D3** (rebuild+deploy);
+> hoy prod corre la imagen vieja.
+
 ## Riesgo y orden
 
 - Fase 0 y 1 son **bajo riesgo / alto valor** — empezar por ahí.
