@@ -38,7 +38,14 @@ async def login(request: Request, form_data: TokenRequest, conn = Depends(get_db
     JOIN clientes_tenant c ON u.cliente_id = c.id
     WHERE LOWER(u.email) = LOWER($1)
     """
-    usuario = await conn.fetchrow(query, form_data.email)
+    # Bypass RLS solo durante el SELECT de login (anonymous, sin tenant context aún).
+    # Hay que setear AMBOS GUCs porque la policy evalúa ambos lados del OR sin
+    # short-circuit, y `current_setting('app.current_tenant_id', true)::uuid`
+    # falla con InvalidTextRepresentation si está vacío. SET LOCAL vive 1 tx.
+    async with conn.transaction():
+        await conn.execute("SET LOCAL app.current_tenant_id = '00000000-0000-0000-0000-000000000000'")
+        await conn.execute("SET LOCAL app.is_superuser = 'true'")
+        usuario = await conn.fetchrow(query, form_data.email)
 
     # 2. Verificar Existencia y Contraseña
     if not usuario:
