@@ -89,3 +89,16 @@ Agregar filtros sin distinguir endpoints super_admin rompería la visibilidad gl
 legítima (admin/coordinador/auditor). Y cambiar el rol de conexión sin entender qué
 queries dependen del bypass puede romper el panel de super_admin. Requiere auditoría
 + tests + staging.
+
+## ✅ DEFENSA EN PROFUNDIDAD ACTIVA EN PROD 2026-05-26
+
+Replicado el RUNBOOK_RLS_DEFENSA_PROFUNDIDAD en prod:
+- Rol nuevo `pqrs_backend` (NOSUPERUSER, NOBYPASSRLS) creado.
+- FORCE RLS activado en `pqrs_adjuntos` y `pqrs_comentarios`.
+- Backend recreado con `DATABASE_URL` apuntando al rol nuevo. Workers intactos.
+- **Probe en prod**: con `is_super=false`, contexto=ARC → solo ve los 1015 casos
+  de ARC (de un total cross-tenant de 1644). RLS aísla efectivamente.
+- Ingesta no se interrumpió (solo recreate del backend).
+
+Resultado: el backend ahora tiene **dos barreras** — filtro explícito `cliente_id`
+(SEC-2026-05-21 PR #8) + policies RLS efectivas a nivel DB.
