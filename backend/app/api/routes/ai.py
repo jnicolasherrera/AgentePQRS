@@ -22,7 +22,12 @@ async def extraer_entidades(
     db: asyncpg.Connection = Depends(get_db_connection)
 ):
     """Ruta para que la IA extraiga información puntual de un caso existente."""
-    caso = await db.fetchrow("SELECT cuerpo, asunto FROM pqrs_casos WHERE id = $1", uuid.UUID(caso_id))
+    # SEC-2026-05-21: filtro explícito de tenant (el rol del backend tiene BYPASSRLS,
+    # las políticas RLS no aíslan). Sin esto, un usuario podía leer casos de otro tenant.
+    caso = await db.fetchrow(
+        "SELECT cuerpo, asunto FROM pqrs_casos WHERE id = $1 AND cliente_id = $2",
+        uuid.UUID(caso_id), uuid.UUID(current_user.tenant_uuid),
+    )
     if not caso:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
 
@@ -36,14 +41,19 @@ async def generar_draft(
     current_user: UserInToken = Depends(get_current_user),
     db: asyncpg.Connection = Depends(get_db_connection)
 ):
-    caso = await db.fetchrow("SELECT * FROM pqrs_casos WHERE id = $1", uuid.UUID(caso_id))
+    # SEC-2026-05-21: filtro explícito de tenant (BYPASSRLS — ver SEC doc).
+    tenant = uuid.UUID(current_user.tenant_uuid)
+    caso = await db.fetchrow(
+        "SELECT * FROM pqrs_casos WHERE id = $1 AND cliente_id = $2",
+        uuid.UUID(caso_id), tenant,
+    )
     if not caso:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
 
     draft = await redactar_borrador_legal(dict(caso))
     if body.save:
         await db.execute(
-            "UPDATE pqrs_casos SET borrador_respuesta = $1, borrador_estado = 'PENDIENTE' WHERE id = $2",
-            draft, uuid.UUID(caso_id),
+            "UPDATE pqrs_casos SET borrador_respuesta = $1, borrador_estado = 'PENDIENTE' WHERE id = $2 AND cliente_id = $3",
+            draft, uuid.UUID(caso_id), tenant,
         )
     return {"status": "success", "draft": draft}

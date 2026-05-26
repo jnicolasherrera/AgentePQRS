@@ -824,3 +824,22 @@ FROM pqrs_casos WHERE cliente_id = '...'
 | DT-38 | Zoho REST API inline image no garantiza render en Outlook | Media | sprint dedicado próximos 14d |
 | DT-39 | Bridge cron `check_ingestion.sh` falsos positivos madrugada CO | Media | reemplazar con DT-33 healthcheck |
 | DT-40 | "Cortesía a tutelas" sin evidencia empírica (esperando caso Paola) | Pendiente | esperar caso real |
+
+---
+
+## DT-41 — No enviar acuse de cortesía a remitentes judiciales (juzgados) ✅ REMEDIADO 2026-05-21
+
+**Severidad:** ALTA (legal) · **Estado:** REMEDIADO (master_worker_outlook.py usa es_remitente_juzgado) · **Registrado:** 2026-05-21
+
+El acuse de recibo automático (`send_acuse_recibo`, `master_worker_outlook.py:~309`)
+NO debe enviarse cuando el remitente (`email_origen`) es un **juzgado / dominio
+judicial**: `@ramajudicial.gov.co`, `@cendoj.ramajudicial.gov.co`,
+`@corteconstitucional.gov.co`, `@notificacionesrj.gov.co` (ya listados en
+`clasificador.py:39-41` y `scoring_engine.py`).
+
+**Motivo:** responder un oficio judicial con un acuse automático de cortesía es
+inapropiado y puede traer problemas legales.
+
+**Fix:** hoy ya se excluye `TUTELA` del acuse; extender la condición para excluir
+también remitentes con dominio judicial. Reusar la lista de dominios de
+`clasificador.py` (idealmente centralizarla en un solo lugar). Relacionado: DT-40.

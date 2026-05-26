@@ -30,3 +30,12 @@ uploads/
 # Archivos locales
 *.bak
 *.bak2
+self_client*.json
+.gstack/
+
+# Clutter / backups locales (Fase 1 limpieza 2026-05-21)
+Brain_backup_*/
+brain_snapshots/
+brain_completo.tar.gz
+.env.local-backup-*
+*.orig

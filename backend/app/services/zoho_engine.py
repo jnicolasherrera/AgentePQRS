@@ -6,22 +6,7 @@ import logging
 
 logger = logging.getLogger("ZOHO_SERVICE")
 
-def _md_to_html(text: str) -> str:
-    """Convierte markdown básico (bold, italic, headers) a HTML."""
-    import re
-    # Headers ## → <h3>, # → <h2>
-    text = re.sub(r'^### (.+)$', r'<h4 style="margin:12px 0 4px">\1</h4>', text, flags=re.MULTILINE)
-    text = re.sub(r'^## (.+)$',  r'<h3 style="margin:14px 0 6px">\1</h3>', text, flags=re.MULTILINE)
-    text = re.sub(r'^# (.+)$',   r'<h2 style="margin:16px 0 8px">\1</h2>', text, flags=re.MULTILINE)
-    # Bold **texto** y __texto__
-    text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
-    text = re.sub(r'__(.+?)__',     r'<strong>\1</strong>', text)
-    # Italic *texto* y _texto_ (no captura los que ya son bold)
-    text = re.sub(r'\*([^*\n]+?)\*', r'<em>\1</em>', text)
-    text = re.sub(r'_([^_\n]+?)_',   r'<em>\1</em>', text)
-    # Saltos de línea → <br>
-    text = text.replace("\n", "<br>")
-    return text
+from app.services.email_utils import md_to_html as _md_to_html
 
 
 def _firma_html() -> str:
@@ -33,6 +18,19 @@ def _firma_html() -> str:
         return f'<br><img src="data:image/jpeg;base64,{b64}" style="max-width:560px;display:block;" alt="Firma" />'
     except Exception:
         return ""
+
+
+class ZohoTokenError(Exception):
+    """Error base al obtener el access token de Zoho."""
+
+
+class ZohoRateLimitError(ZohoTokenError):
+    """Zoho rate-limiteó el endpoint OAuth — transitorio, reintentar tras backoff."""
+
+
+class ZohoAuthError(ZohoTokenError):
+    """refresh_token revocado/inválido — permanente, requiere regenerar el token."""
+
 
 class ZohoServiceV2:
     ZOHO_ACCOUNTS_URL = "https://accounts.zoho.com"
@@ -63,7 +61,7 @@ class ZohoServiceV2:
         if backoff_until and now < backoff_until:
             remaining = int((backoff_until - now).total_seconds())
             failures = ZohoServiceV2._consecutive_failures.get(self.refresh_token, 0)
-            raise Exception(f"Zoho token rate-limited, intento {failures}/{self.ZOHO_MAX_RETRIES}, retry en {remaining}s")
+            raise ZohoRateLimitError(f"Zoho token rate-limited, intento {failures}/{self.ZOHO_MAX_RETRIES}, retry en {remaining}s")
         # Check class-level token cache (survives instance recreation)
         cached = ZohoServiceV2._token_cache.get(self.refresh_token)
         if cached:
@@ -78,35 +76,51 @@ class ZohoServiceV2:
             "client_secret": self.client_secret,
             "grant_type": "refresh_token",
         }
-        resp = requests.post(url, data=data)
-        if resp.status_code != 200:
-            if "too many requests" in resp.text.lower():
-                failures = ZohoServiceV2._consecutive_failures.get(self.refresh_token, 0) + 1
-                ZohoServiceV2._consecutive_failures[self.refresh_token] = failures
-                # Exponential backoff: 90s, 180s, 600s, 1800s
-                backoff_map = {1: 1, 2: 2, 3: 6.67, 4: 20}
-                multiplier = backoff_map.get(failures, 20)
-                wait_seconds = int(self.ZOHO_BACKOFF_BASE_SECONDS * multiplier)
-                ZohoServiceV2._backoff_registry[self.refresh_token] = now + timedelta(seconds=wait_seconds)
-                if failures >= self.ZOHO_MAX_RETRIES:
-                    logger.critical(
-                        f"Zoho rate-limit CRITICO: {failures} fallos consecutivos, "
-                        f"backoff {wait_seconds}s. Buzón posiblemente inoperante."
-                    )
-                else:
-                    logger.warning(
-                        f"Zoho rate-limit detectado, intento {failures}/{self.ZOHO_MAX_RETRIES}, "
-                        f"backoff {wait_seconds}s"
-                    )
-            raise Exception(f"Error Zoho Token: {resp.text}")
-        # Success — reset failure counter and cache token at class level
-        ZohoServiceV2._backoff_registry.pop(self.refresh_token, None)
-        ZohoServiceV2._consecutive_failures.pop(self.refresh_token, None)
-        res = resp.json()
-        access_token = res["access_token"]
-        expiry = now + timedelta(seconds=res.get("expires_in", 3600) - 60)
-        ZohoServiceV2._token_cache[self.refresh_token] = (access_token, expiry)
-        return access_token
+        resp = requests.post(url, data=data, timeout=30)
+        # Zoho a veces devuelve 200 con un body de error (sin access_token).
+        # Parseamos el body SIEMPRE y decidimos por la presencia de access_token,
+        # no solo por el status code.
+        try:
+            res = resp.json()
+        except ValueError:
+            res = {}
+
+        access_token = res.get("access_token")
+        if access_token:
+            # Éxito — resetear contadores y cachear token a nivel de clase.
+            ZohoServiceV2._backoff_registry.pop(self.refresh_token, None)
+            ZohoServiceV2._consecutive_failures.pop(self.refresh_token, None)
+            expiry = now + timedelta(seconds=res.get("expires_in", 3600) - 60)
+            ZohoServiceV2._token_cache[self.refresh_token] = (access_token, expiry)
+            return access_token
+
+        # No vino access_token → es un error. Clasificar:
+        failures = ZohoServiceV2._consecutive_failures.get(self.refresh_token, 0) + 1
+        ZohoServiceV2._consecutive_failures[self.refresh_token] = failures
+        body = (resp.text or "").lower()
+        is_rate_limit = resp.status_code == 429 or "too many requests" in body
+
+        if is_rate_limit:
+            # Transitorio — backoff exponencial (90s, 180s, 600s, 1800s) y reintentar.
+            backoff_map = {1: 1, 2: 2, 3: 6.67, 4: 20}
+            wait_seconds = int(self.ZOHO_BACKOFF_BASE_SECONDS * backoff_map.get(failures, 20))
+            ZohoServiceV2._backoff_registry[self.refresh_token] = now + timedelta(seconds=wait_seconds)
+            log = logger.critical if failures >= self.ZOHO_MAX_RETRIES else logger.warning
+            log(f"Zoho rate-limit, intento {failures}/{self.ZOHO_MAX_RETRIES}, backoff {wait_seconds}s")
+            raise ZohoRateLimitError(f"Zoho rate-limited, retry en {wait_seconds}s")
+
+        # Error de auth PERMANENTE (refresh_token revocado/inválido). Antes esto
+        # crasheaba con KeyError 'access_token' y reintentaba sin pausa, disparando
+        # el rate-limit del endpoint OAuth (causa de la caída de 13 días, mayo 2026).
+        # Ahora: backoff largo para no martillar + log crítico que pide re-auth.
+        err = res.get("error") or (resp.text or "")[:200]
+        wait_seconds = int(self.ZOHO_BACKOFF_BASE_SECONDS * 20)
+        ZohoServiceV2._backoff_registry[self.refresh_token] = now + timedelta(seconds=wait_seconds)
+        logger.critical(
+            f"Zoho AUTH FALLIDA (refresh_token revocado/inválido): error='{err}'. "
+            f"Requiere regenerar el refresh_token. Backoff {wait_seconds}s para no disparar rate-limit."
+        )
+        raise ZohoAuthError(f"Zoho refresh_token inválido: {err}")
 
     def _make_request(self, endpoint, method="GET", params=None, json_data=None):
         token = self._get_access_token()

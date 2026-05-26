@@ -99,7 +99,7 @@ async def test_p2_put_borrador_unchanged_skips_audit():
     from app.api.routes.casos import editar_borrador, BorradorUpdateRequest
 
     texto_actual = "Borrador original sin cambios."
-    fake_user = MagicMock(usuario_id=str(USUARIO))
+    fake_user = MagicMock(usuario_id=str(USUARIO), tenant_uuid=str(TENANT), role="abogado")
     fake_conn = AsyncMock()
     fake_conn.fetchrow = AsyncMock(return_value={
         "id": CASO, "cliente_id": TENANT, "tipo_caso": "PETICION",
@@ -122,7 +122,7 @@ async def test_p2_put_borrador_changed_inserts_audit():
     """Si el texto nuevo != texto actual, sí se hace UPDATE + audit + feedback."""
     from app.api.routes.casos import editar_borrador, BorradorUpdateRequest
 
-    fake_user = MagicMock(usuario_id=str(USUARIO))
+    fake_user = MagicMock(usuario_id=str(USUARIO), tenant_uuid=str(TENANT), role="abogado")
     fake_conn = AsyncMock()
     fake_conn.fetchrow = AsyncMock(return_value={
         "id": CASO, "cliente_id": TENANT, "tipo_caso": "PETICION",

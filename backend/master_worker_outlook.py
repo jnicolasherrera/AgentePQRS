@@ -31,9 +31,8 @@ from app.services.storage_engine import upload_file as upload_to_minio
 from app.services.zoho_engine import ZohoServiceV2
 from app.services.sharepoint_engine import SharePointEngineV2
 from app.services.plantilla_engine import generar_borrador_para_caso
-from app.services.clasificador import parece_pqrs
-
-TENANT_ABOGADOS_RECOVERY = "effca814-b0b5-4329-96be-186c0333ad4b"
+from app.services.clasificador import parece_pqrs, es_remitente_juzgado
+from app.constants import TENANT_ABOGADOS_RECOVERY
 
 _RE_PREFIX = re.compile(r'^(?:(?:[a-z]{1,4}\s*-\s*)+)?(?:re|fw|fwd|rv|rta|r)\s*:\s*', re.IGNORECASE)
 _RE_RADICADO = re.compile(r'PQRS-\d{4}-[A-F0-9]{6,8}', re.IGNORECASE)
@@ -293,8 +292,12 @@ async def master_worker():
                         logger.info(f"⏭️  Email ya procesado, ignorando: {em['id'][:20]}")
                         continue
 
-                    # Acuse de recibo solo para Abogados Recovery (excluye tutelas)
-                    if str(c_id) == TENANT_ABOGADOS_RECOVERY and resultado.tipo.value != "TUTELA":
+                    # Acuse de recibo solo para Abogados Recovery (excluye tutelas
+                    # y remitentes judiciales — DT-41: no responder un oficio de
+                    # juzgado con un acuse automático de cortesía).
+                    if (str(c_id) == TENANT_ABOGADOS_RECOVERY
+                            and resultado.tipo.value != "TUTELA"
+                            and not es_remitente_juzgado(em['sender'])):
                         try:
                             radicado = f"PQRS-{dt.year}-{str(db_id)[:8].upper()}"
                             PLAZOS = {
