@@ -65,6 +65,13 @@ OK (filtran por cliente_id/rol): `stats.py`, `casos.py /enviados/historial`, `/m
   `POST /{id}/rechazar-borrador` — **REMEDIADO 2026-05-21** (opción A: super_admin ve todos,
   resto scoped a su tenant; `WHERE id=$1 AND (es_super OR cliente_id=$tenant)`).
 
+## ✅ DEPLOYADO A PROD 2026-05-26
+
+Los 7 endpoints remediados están en runtime en prod desde `2026-05-26 15:08 UTC`
+(tag `d3-deploy-prod-2026-05-26`, ver [[SPRINT_D3_DEPLOY_2026-05-26]]).
+**Pendiente:** validación del aislamiento con cuentas reales + RLS defensa en
+profundidad (rol del backend sin BYPASSRLS).
+
 ## Estado de remediación (2026-05-21)
 
 ✅ **7 endpoints IDOR cerrados** (ai.py ×2, casos.py ×5), test-backed (suite 88 verde

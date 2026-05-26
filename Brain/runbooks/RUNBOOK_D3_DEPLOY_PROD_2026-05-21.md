@@ -63,6 +63,12 @@ ssh ubuntu@18.228.54.9 'cd /home/ubuntu/PQRS_V2 && \
 ```
 (La DB no se tocó; el backup de S3 es por las dudas.)
 
+## ✅ EJECUTADO 2026-05-26 — OK
+
+Backup: `s3://flexpqr-backups-prod/backup_pre_d3_20260526_150507.dump.gz`.
+Tag: `d3-deploy-prod-2026-05-26`. PR #8 mergeado a main (`5cd8b01`).
+Sin rollback necesario. Ver [[SPRINT_D3_DEPLOY_2026-05-26]].
+
 ## POST (después de validar OK)
 - [ ] Mergear PR #8 a main (sincronizar la verdad).
 - [ ] Avisar a Paola que quedó OK.
