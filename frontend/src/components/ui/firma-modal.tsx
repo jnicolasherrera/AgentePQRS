@@ -65,20 +65,20 @@ export function FirmaModal({ casoIds, totalCasos, onClose, onEnviado }: Props) {
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95 }}
           transition={{ type: "spring", damping: 25, stiffness: 350 }}
-          className="relative w-full max-w-md bg-[#0d0d14] border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
+          className="relative w-full max-w-md bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
         >
           {/* Header */}
-          <div className="agente items-center justify-between p-5 border-b border-white/8">
+          <div className="agente items-center justify-between p-5 border-b border-border">
             <div className="agente items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-primary/20 border border-primary/30 agente items-center justify-center">
                 <ShieldCheck className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <p className="font-bold text-white">Confirmar envío</p>
-                <p className="text-xs text-slate-500">Firma digital requerida</p>
+                <p className="font-bold text-foreground">Confirmar envío</p>
+                <p className="text-xs text-muted-foreground">Firma digital requerida</p>
               </div>
             </div>
-            <button onClick={resultado ? cerrar : onClose} className="text-slate-500 hover:text-white transition-colors">
+            <button onClick={resultado ? cerrar : onClose} className="text-muted-foreground hover:text-foreground transition-colors">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -87,11 +87,11 @@ export function FirmaModal({ casoIds, totalCasos, onClose, onEnviado }: Props) {
             {!resultado ? (
               <>
                 {/* Resumen del lote */}
-                <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-                  <p className="text-sm text-slate-300">
-                    Va a enviar <span className="text-white font-bold">{totalCasos} respuesta{totalCasos !== 1 ? "s" : ""}</span> en nombre de:
+                <div className="bg-muted border border-border rounded-xl p-4 space-y-2">
+                  <p className="text-sm text-foreground/80">
+                    Va a enviar <span className="text-foreground font-bold">{totalCasos} respuesta{totalCasos !== 1 ? "s" : ""}</span> en nombre de:
                   </p>
-                  <p className="text-base font-bold text-white">{user?.nombre || user?.email}</p>
+                  <p className="text-base font-bold text-foreground">{user?.nombre || user?.email}</p>
                 </div>
 
                 {/* Advertencia legal */}
@@ -105,7 +105,7 @@ export function FirmaModal({ casoIds, totalCasos, onClose, onEnviado }: Props) {
 
                 {/* Input contraseña */}
                 <div className="space-y-2">
-                  <label className="text-xs text-slate-400 font-semibold uppercase tracking-wider">
+                  <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">
                     Su contraseña
                   </label>
                   <div className="relative">
@@ -116,12 +116,12 @@ export function FirmaModal({ casoIds, totalCasos, onClose, onEnviado }: Props) {
                       onKeyDown={e => e.key === "Enter" && confirmar()}
                       placeholder="••••••••"
                       autoFocus
-                      className="w-full bg-white/5 border border-white/15 rounded-xl px-4 py-3 pr-11 text-white outline-none focus:border-primary transition-colors text-sm"
+                      className="w-full bg-muted border border-border rounded-xl px-4 py-3 pr-11 text-foreground outline-none focus:border-primary transition-colors text-sm"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPass(v => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white transition-colors"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                     >
                       {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
@@ -140,7 +140,7 @@ export function FirmaModal({ casoIds, totalCasos, onClose, onEnviado }: Props) {
                 <div className="agente gap-3">
                   <button
                     onClick={onClose}
-                    className="agente-1 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:border-white/20 transition-colors text-sm font-medium"
+                    className="agente-1 py-2.5 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors text-sm font-medium"
                   >
                     Cancelar
                   </button>
@@ -160,8 +160,8 @@ export function FirmaModal({ casoIds, totalCasos, onClose, onEnviado }: Props) {
                   <ShieldCheck className="w-8 h-8 text-green-400" />
                 </div>
                 <div>
-                  <p className="text-xl font-bold text-white">{resultado.enviados} enviado{resultado.enviados !== 1 ? "s" : ""}</p>
-                  <p className="text-sm text-slate-400 mt-1">Lote procesado y registrado en el audit log</p>
+                  <p className="text-xl font-bold text-foreground">{resultado.enviados} enviado{resultado.enviados !== 1 ? "s" : ""}</p>
+                  <p className="text-sm text-muted-foreground mt-1">Lote procesado y registrado en el audit log</p>
                 </div>
                 {resultado.errores.length > 0 && (
                   <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-left">

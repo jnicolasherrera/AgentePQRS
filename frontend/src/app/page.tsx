@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { useAuthStore } from "@/store/authStore";
 import { motion } from "framer-motion";
-import { LogOut, Activity, Users, Settings, Database, Server, Send, Radio, ChevronDown, Inbox } from "lucide-react";
+import { LogOut, Activity, Users, Settings, Database, Server, Send, ChevronDown, Inbox } from "lucide-react";
 import { LiveFeed } from "@/components/ui/live-feed";
 import { DashboardMetrics } from "@/components/ui/dashboard-metrics";
 import { SettingsTab } from "@/components/ui/settings-tab";
@@ -50,7 +50,7 @@ export default function DashboardPage() {
 
   const tabs = isAbogado
     ? ["Dashboard", "Mis Casos", "Enviados", "Configuración"]
-    : ["Dashboard", "Casos", "Enviados", "Bandeja", "Rendimiento", "Configuración"];
+    : ["Dashboard", "Bandeja", "Enviados", "Rendimiento", "Configuración"];
 
   const abogadoIcons = [
     <Activity key={0} className="w-5 h-5" />,
@@ -60,11 +60,10 @@ export default function DashboardPage() {
   ];
   const adminIcons = [
     <Activity key={0} className="w-5 h-5" />,
-    <Radio key={1} className="w-5 h-5" />,
+    <Inbox key={1} className="w-5 h-5" />,
     <Send key={2} className="w-5 h-5" />,
-    <Inbox key={3} className="w-5 h-5" />,
-    <Users key={4} className="w-5 h-5" />,
-    <Settings key={5} className="w-5 h-5" />,
+    <Users key={3} className="w-5 h-5" />,
+    <Settings key={4} className="w-5 h-5" />,
   ];
 
   const [activeTab, setActiveTab] = useState("Dashboard");
@@ -94,16 +93,18 @@ export default function DashboardPage() {
   const icons = isAbogado ? abogadoIcons : adminIcons;
 
   return (
-    <div className="h-screen w-full bg-background-dark text-white agente overflow-hidden">
+    <div className="h-screen w-full metallic-surface text-foreground agente overflow-hidden relative">
 
-      <div className="absolute top-[-200px] left-1/2 -translate-x-1/2 w-[900px] h-[600px] bg-gradient-to-b from-primary/12 to-transparent blur-[140px] rounded-full pointer-events-none z-0" />
+      {/* Aurora orbs detrás del sidebar — el liquid glass los refracta */}
+      <span aria-hidden className="liquid-aurora liquid-aurora-1" />
+      <span aria-hidden className="liquid-aurora liquid-aurora-2" />
+      <span aria-hidden className="liquid-aurora liquid-aurora-3" />
 
-      {/* SIDEBAR */}
-      <aside className="w-64 shrink-0 glass-panel border-r border-white/5 agente agente-col items-center py-8 z-10 relative shadow-[10px_0_40px_rgba(0,0,0,0.6)]">
-        <div className="absolute inset-0 bg-gradient-to-b from-primary/5 via-transparent to-transparent pointer-events-none rounded-r-none" />
+      {/* SIDEBAR — Liquid Glass navy de marca */}
+      <aside className="w-64 shrink-0 liquid-glass-nav text-white agente agente-col items-center py-8 z-10 relative">
         <div className="text-2xl font-black tracking-tight mb-12 agente items-center gap-2 relative">
-          <Image src="/logo.png" alt="Flex" width={28} height={28} className="rounded-md ring-2 ring-primary/20" />
-          Flex<span className="text-primary drop-shadow-[0_0_8px_rgba(13,89,242,0.4)]">PQR</span>
+          <Image src="/logo.png" alt="Flex" width={28} height={28} className="rounded-md ring-2 ring-white/20" />
+          Flex<span className="text-brand-cyan drop-shadow-[0_0_8px_rgba(6,182,212,0.5)]">PQR</span>
         </div>
 
         <nav className="agente-1 w-full px-4 space-y-2">
@@ -115,8 +116,8 @@ export default function DashboardPage() {
               aria-current={activeTab === item ? "page" : undefined}
               className={`w-full p-3 rounded-lg agente items-center gap-3 transition-colors text-left ${
                 activeTab === item
-                  ? "bg-primary border border-primary/50 shadow-[0_0_15px_rgba(13,89,242,0.5)] font-bold text-white"
-                  : "hover:bg-white/5 text-slate-400 font-medium"
+                  ? "bg-primary border border-primary/50 shadow-[0_0_15px_rgba(3,90,167,0.55)] font-bold text-white"
+                  : "hover:bg-white/10 text-white/60 font-medium"
               }`}
             >
               {icons[i]}
@@ -144,15 +145,15 @@ export default function DashboardPage() {
 
       {/* MAIN */}
       <main className="agente-1 min-h-0 px-12 py-10 z-10 overflow-y-auto agente agente-col custom-scrollbar">
-        <header className="agente items-center justify-between mb-10 border-b border-white/5 pb-6 shrink-0">
+        <header className="agente items-center justify-between mb-10 border-b border-border pb-6 shrink-0">
           <div>
-            <h1 className="text-3xl font-extrabold text-white agente items-center gap-3">
+            <h1 className="text-3xl font-extrabold text-foreground agente items-center gap-3">
               {TAB_TITLE[activeTab] ?? activeTab}
-              <span className="px-3 py-1 bg-green-500/10 border border-green-500/30 text-green-400 text-xs rounded-full agente items-center gap-1">
+              <span className="px-3 py-1 bg-green-500/10 border border-green-500/30 text-green-600 text-xs rounded-full agente items-center gap-1">
                 <Server className="w-3 h-3 animate-pulse" /> En línea
               </span>
             </h1>
-            <p className="text-slate-400 mt-2 font-medium">Actualizaciones en tiempo real · Datos aislados por tenant</p>
+            <p className="text-muted-foreground mt-2 font-medium">Actualizaciones en tiempo real · Datos aislados por tenant</p>
           </div>
 
           <div className="agente items-center gap-3">
@@ -161,18 +162,18 @@ export default function DashboardPage() {
                 <select
                   value={selectedClienteId}
                   onChange={(e) => setSelectedClienteId(e.target.value)}
-                  className="appearance-none bg-[#161b26] border border-white/15 hover:border-primary/50 rounded-xl px-4 py-2 pr-8 text-sm text-white outline-none focus:border-primary transition-all cursor-pointer [&>option]:bg-[#161b26] [&>option]:text-white"
+                  className="appearance-none bg-card border border-border hover:border-primary/50 rounded-xl px-4 py-2 pr-8 text-sm text-foreground outline-none focus:border-primary transition-all cursor-pointer [&>option]:bg-card [&>option]:text-foreground"
                 >
                   <option value="">Todos los clientes</option>
                   {clientes.map(c => (
                     <option key={c.id} value={c.id}>{c.nombre}</option>
                   ))}
                 </select>
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
               </div>
             )}
-            <div className="agente items-center gap-4 glass-kpi px-4 py-2 rounded-xl">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-purple-600 agente items-center justify-center font-bold text-xs ring-2 ring-primary/30 uppercase shadow-[0_0_12px_rgba(13,89,242,0.3)]">
+            <div className="agente items-center gap-4 bg-card border border-border px-4 py-2 rounded-xl shadow-sm">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-brand-cyan text-white agente items-center justify-center font-bold text-xs ring-2 ring-primary/20 uppercase shadow-[0_0_12px_rgba(3,90,167,0.3)]">
                 {user?.nombre ? user.nombre.split(" ").map((n: string) => n[0]).join("") : "NH"}
               </div>
               <div className="text-sm font-medium">{user?.nombre || "Usuario"}</div>
@@ -180,12 +181,11 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {activeTab === "Dashboard" && <DashboardMetrics selectedClienteId={selectedClienteId} />}
-
-        {activeTab === "Casos" && (
-          <div className="agente-1 w-full min-h-0">
-            <LiveFeed tickets={tickets} connected={connected} onCasoStatusChange={handleCasoStatusChange} enableResponse selectedClienteId={selectedClienteId} />
-          </div>
+        {activeTab === "Dashboard" && (
+          <DashboardMetrics
+            selectedClienteId={selectedClienteId}
+            onVerTodos={() => setActiveTab(isAbogado ? "Mis Casos" : "Bandeja")}
+          />
         )}
 
         {activeTab === "Mis Casos" && (

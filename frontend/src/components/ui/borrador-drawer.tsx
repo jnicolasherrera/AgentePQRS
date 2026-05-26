@@ -90,30 +90,30 @@ export function BorradorDrawer({ caso, onClose, onActualizado, onRechazado }: Pr
           animate={{ x: 0 }}
           exit={{ x: "100%" }}
           transition={{ type: "spring", damping: 28, stiffness: 300 }}
-          className="absolute right-0 top-0 bottom-0 w-full max-w-2xl bg-[#0a0a0f] border-l border-white/10 flex flex-col shadow-2xl"
+          className="absolute right-0 top-0 bottom-0 w-full max-w-2xl bg-card border-l border-border flex flex-col shadow-2xl"
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-5 border-b border-white/8">
+          <div className="flex items-center justify-between p-5 border-b border-border">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center">
                 <Mail className="w-4 h-4 text-primary" />
               </div>
               <div>
-                <p className="font-bold text-white text-sm truncate max-w-xs">{caso.asunto}</p>
-                <p className="text-xs text-slate-500">{caso.email_origen}</p>
+                <p className="font-bold text-foreground text-sm truncate max-w-xs">{caso.asunto}</p>
+                <p className="text-xs text-muted-foreground">{caso.email_origen}</p>
               </div>
             </div>
-            <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
               <X className="w-5 h-5" />
             </button>
           </div>
 
           {/* Meta */}
-          <div className="flex items-center gap-3 px-5 py-3 border-b border-white/5">
-            <span className="flex items-center gap-1.5 text-xs bg-white/5 border border-white/10 px-2.5 py-1 rounded-full text-slate-300">
+          <div className="flex items-center gap-3 px-5 py-3 border-b border-border">
+            <span className="flex items-center gap-1.5 text-xs bg-muted border border-border px-2.5 py-1 rounded-full text-foreground/80">
               <Tag className="w-3 h-3" />{caso.tipo}
             </span>
-            <span className="text-xs text-slate-500 font-mono">
+            <span className="text-xs text-muted-foreground font-mono">
               {caso.problematica?.replace(/_/g, " ") || "Sin problemática"}
             </span>
           </div>
@@ -121,7 +121,7 @@ export function BorradorDrawer({ caso, onClose, onActualizado, onRechazado }: Pr
           {/* Borrador */}
           <div className="flex-1 flex flex-col p-5 gap-4 overflow-hidden">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">
+              <h3 className="text-sm font-bold text-foreground/80 uppercase tracking-wider">
                 Borrador de Respuesta
               </h3>
               {!editando && (
@@ -133,7 +133,7 @@ export function BorradorDrawer({ caso, onClose, onActualizado, onRechazado }: Pr
                 </button>
               )}
               {editando && autoSaveStatus !== "idle" && (
-                <span className="text-xs text-slate-500 italic">
+                <span className="text-xs text-muted-foreground italic">
                   {autoSaveStatus === "saving" ? "Guardando..." : "✓ Guardado"}
                 </span>
               )}
@@ -143,19 +143,19 @@ export function BorradorDrawer({ caso, onClose, onActualizado, onRechazado }: Pr
               <textarea
                 value={texto}
                 onChange={e => setTexto(e.target.value)}
-                className="flex-1 bg-white/5 border border-primary/30 rounded-xl p-4 text-sm text-slate-200 font-mono resize-none outline-none focus:border-primary transition-colors leading-relaxed"
+                className="flex-1 bg-muted border border-primary/30 rounded-xl p-4 text-sm text-foreground/90 font-mono resize-none outline-none focus:border-primary transition-colors leading-relaxed"
               />
             ) : (
-              <div className="flex-1 overflow-y-auto bg-white/3 border border-white/8 rounded-xl p-4">
-                <pre className="text-sm text-slate-300 whitespace-pre-wrap font-sans leading-relaxed">
-                  {texto || <span className="text-slate-600 italic">Sin borrador</span>}
+              <div className="flex-1 overflow-y-auto bg-muted border border-border rounded-xl p-4">
+                <pre className="text-sm text-foreground/80 whitespace-pre-wrap font-sans leading-relaxed">
+                  {texto || <span className="text-muted-foreground/70 italic">Sin borrador</span>}
                 </pre>
               </div>
             )}
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between p-5 border-t border-white/8 gap-3">
+          <div className="flex items-center justify-between p-5 border-t border-border gap-3">
             <button
               onClick={rechazar}
               disabled={rechazando}
@@ -169,7 +169,7 @@ export function BorradorDrawer({ caso, onClose, onActualizado, onRechazado }: Pr
               <div className="flex gap-2 ml-auto">
                 <button
                   onClick={() => { setTexto(caso.borrador_respuesta); setEditando(false); }}
-                  className="px-3 py-2 text-sm text-slate-400 hover:text-white transition-colors"
+                  className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Cancelar
                 </button>
@@ -185,7 +185,7 @@ export function BorradorDrawer({ caso, onClose, onActualizado, onRechazado }: Pr
             )}
 
             {!editando && (
-              <p className="ml-auto text-xs text-slate-600">
+              <p className="ml-auto text-xs text-muted-foreground/70">
                 Seleccionalo en la tabla para incluirlo en el lote
               </p>
             )}

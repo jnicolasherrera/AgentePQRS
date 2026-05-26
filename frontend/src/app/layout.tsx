@@ -3,7 +3,11 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { SessionGuardProvider } from '@/components/ui/SessionGuardProvider';
 
-const inter = Inter({ subsets: ['latin'] });
+const inter = Inter({
+  variable: '--font-inter',
+  subsets: ['latin'],
+  weight: ['300', '400', '500', '600', '700', '800', '900'],
+});
 
 export const metadata: Metadata = {
   title: 'FlexPQR — Sistema de Gestión de PQRs',
@@ -17,7 +21,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es">
-      <body className={inter.className}>
+      <body className={`${inter.variable} font-sans antialiased`}>
         <SessionGuardProvider>
           {children}
         </SessionGuardProvider>

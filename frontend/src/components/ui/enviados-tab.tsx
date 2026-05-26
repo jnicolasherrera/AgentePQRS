@@ -79,14 +79,14 @@ export function EnviadosTab({ selectedClienteId }: { selectedClienteId?: string 
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+          <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
             <Send className="w-5 h-5 text-primary" />
             Historial de Enviados
             <span className="ml-1 px-2 py-0.5 bg-primary/20 text-primary text-sm rounded-full border border-primary/30">
               {rows.length}
             </span>
           </h2>
-          <button onClick={fetchEnviados} className="text-slate-500 hover:text-white transition-colors">
+          <button onClick={fetchEnviados} className="text-muted-foreground hover:text-foreground transition-colors">
             <RefreshCw className="w-4 h-4" />
           </button>
         </div>
@@ -95,7 +95,7 @@ export function EnviadosTab({ selectedClienteId }: { selectedClienteId?: string 
           <select
             value={filtroAbogado}
             onChange={e => setFiltroAbogado(e.target.value)}
-            className="bg-black/40 border border-white/15 rounded-lg px-3 py-1.5 text-sm text-white outline-none focus:border-primary transition-all"
+            className="bg-black/40 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground outline-none focus:border-primary transition-all"
           >
             <option value="">Todos los abogados</option>
             {abogados.map(a => <option key={a} value={a}>{a}</option>)}
@@ -103,7 +103,7 @@ export function EnviadosTab({ selectedClienteId }: { selectedClienteId?: string 
 
           <button
             onClick={exportCSV}
-            className="flex items-center gap-2 px-3 py-1.5 border border-white/15 rounded-lg text-sm text-slate-300 hover:border-white/30 hover:text-white transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 border border-border rounded-lg text-sm text-foreground/80 hover:border-border hover:text-foreground transition-colors"
           >
             <Download className="w-3.5 h-3.5" /> CSV
           </button>
@@ -111,23 +111,23 @@ export function EnviadosTab({ selectedClienteId }: { selectedClienteId?: string 
       </div>
 
       {filtrados.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-slate-500">
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <Send className="w-12 h-12 mb-4 opacity-30" />
-          <p className="font-medium text-slate-300">No has enviado respuestas aun</p>
-          <p className="text-sm mt-1 text-slate-500">Las respuestas que apruebes apareceran aqui</p>
+          <p className="font-medium text-foreground/80">No has enviado respuestas aun</p>
+          <p className="text-sm mt-1 text-muted-foreground">Las respuestas que apruebes apareceran aqui</p>
         </div>
       ) : (
-        <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+        <div className="glass-panel rounded-2xl overflow-hidden">
           {/* Leyenda de lotes */}
           {lotesList.length > 0 && (
-            <div className="flex items-center gap-3 px-4 py-2 border-b border-white/5 text-xs text-slate-500">
+            <div className="flex items-center gap-3 px-4 py-2 border-b border-border text-xs text-muted-foreground">
               <Package className="w-3.5 h-3.5" />
               Lotes: {lotesList.length} — el borde izquierdo agrupa emails del mismo envío
             </div>
           )}
 
           {/* Header tabla */}
-          <div className="grid grid-cols-[1fr_1fr_6rem_8rem_7rem] gap-4 px-4 py-3 border-b border-white/8 text-xs text-slate-500 uppercase tracking-wider font-semibold">
+          <div className="grid grid-cols-[1fr_1fr_6rem_8rem_7rem] gap-4 px-4 py-3 border-b border-border text-xs text-muted-foreground uppercase tracking-wider font-semibold">
             <span>Para / Asunto</span>
             <span>Tipo</span>
             <span>Abogado</span>
@@ -140,29 +140,29 @@ export function EnviadosTab({ selectedClienteId }: { selectedClienteId?: string 
               key={row.id}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className={`grid grid-cols-[1fr_1fr_6rem_8rem_7rem] gap-4 px-4 py-3 border-b border-white/5 items-center border-l-2 ${row.lote_id ? loteColors[row.lote_id] : "border-l-transparent"}`}
+              className={`grid grid-cols-[1fr_1fr_6rem_8rem_7rem] gap-4 px-4 py-3 border-b border-border items-center border-l-2 ${row.lote_id ? loteColors[row.lote_id] : "border-l-transparent"}`}
             >
               <div className="min-w-0">
-                <p className="text-sm text-white truncate">{row.email_destino}</p>
-                <p className="text-xs text-slate-500 truncate">{row.asunto}</p>
+                <p className="text-sm text-foreground truncate">{row.email_destino}</p>
+                <p className="text-xs text-muted-foreground truncate">{row.asunto}</p>
               </div>
 
-              <span className={`text-xs px-2 py-0.5 rounded-full border font-bold w-fit ${TIPO_COLOR[row.tipo] || "text-slate-400 border-slate-400/30"}`}>
+              <span className={`text-xs px-2 py-0.5 rounded-full border font-bold w-fit ${TIPO_COLOR[row.tipo] || "text-muted-foreground border-slate-400/30"}`}>
                 {row.tipo}
               </span>
 
-              <div className="flex items-center gap-1.5 text-xs text-slate-300 min-w-0">
-                <User className="w-3 h-3 text-slate-500 shrink-0" />
+              <div className="flex items-center gap-1.5 text-xs text-foreground/80 min-w-0">
+                <User className="w-3 h-3 text-muted-foreground shrink-0" />
                 <span className="truncate">{row.abogado}</span>
               </div>
 
-              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Clock className="w-3 h-3" />
                 {formatFecha(row.fecha_envio)}
               </div>
 
               {row.lote_id && (
-                <span className="text-xs text-slate-600 font-mono truncate" title={row.lote_id}>
+                <span className="text-xs text-muted-foreground/70 font-mono truncate" title={row.lote_id}>
                   Lote {row.lote_id.substring(0, 8)}
                 </span>
               )}
