@@ -11,6 +11,10 @@ from app.services.rag_engine import (
     buscar_docs_similares,
     formatear_contexto_para_prompt,
 )
+from app.services.ab_test_engine import (
+    persistir_variant,
+    registrar_shadow_para_caso,
+)
 
 logger = logging.getLogger("PLANTILLA_ENGINE")
 
@@ -268,6 +272,29 @@ async def generar_borrador_para_caso(
         estado   = "PENDIENTE" if borrador else "SIN_PLANTILLA"
         pid      = None
         rag_docs_usados = getattr(generar_borrador_con_ia, "_last_rag_docs", []) or []
+
+        # ── Fase 4 A/B shadow mode ────────────────────────────────────────
+        # Persistimos la variant oficial (with_rag) + lanzamos shadow no_rag
+        # para comparación posterior. Ambas son fire-and-degrade: si
+        # cualquiera falla, log warn y el flow sigue normal.
+        if borrador and tipo_caso:
+            await persistir_variant(
+                conn, caso_id, tenant_id, "with_rag", borrador,
+                rag_docs=[
+                    {"source_type": d["source_type"],
+                     "source_id":   d["source_id"],
+                     "sim_score":   round(float(d["sim_score"]), 4)}
+                    for d in rag_docs_usados
+                ],
+                tipo_caso=tipo_caso,
+                modelo="claude-haiku-4-5-20251001",
+            )
+            # Shadow inline (~3-5s extra). NO usamos create_task para evitar
+            # leaks de tasks no-awaited en el worker batch.
+            await registrar_shadow_para_caso(
+                conn, caso_id, tenant_id, asunto, cuerpo,
+                tipo_caso, nombre_cliente,
+            )
 
     await conn.execute(
         """UPDATE pqrs_casos
