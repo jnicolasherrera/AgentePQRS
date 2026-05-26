@@ -36,18 +36,64 @@ async def get_dashboard_stats(
         filtros.append(f"asignado_a = ${len(params)}::uuid")
     w = "WHERE " + " AND ".join(filtros)
 
-    total_casos    = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w}", *params)
-    total_criticos = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND nivel_prioridad IN ('ALTA', 'CRITICA')", *params)
-    abiertos       = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND estado = 'ABIERTO'", *params)
-    en_proceso     = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND estado = 'EN_PROCESO'", *params)
-    contestados    = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND estado = 'CONTESTADO'", *params)
-    cerrados       = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND estado = 'CERRADO'", *params)
-    casos_hoy      = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND fecha_recibido >= CURRENT_DATE", *params)
-    casos_semana   = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND fecha_recibido >= CURRENT_DATE - INTERVAL '7 days'", *params)
-    vencidos       = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND fecha_vencimiento < NOW() AND estado != 'CERRADO'", *params)
-    asignados      = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND asignado_a IS NOT NULL", *params)
-    con_acuse      = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND acuse_enviado = TRUE", *params)
-    respondidos    = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND estado IN ('CONTESTADO', 'CERRADO')", *params)
+    # KPIs en una sola query con COUNT(*) FILTER (1 RTT vs 14)
+    # Incluye breakdown PQR/TUTELA y pulso de tutelas (SLA propio, 10 días).
+    kpi = await conn.fetchrow(f"""
+        SELECT
+          COUNT(*) AS total_casos,
+          COUNT(*) FILTER (WHERE nivel_prioridad IN ('ALTA','CRITICA')) AS total_criticos,
+          COUNT(*) FILTER (WHERE estado='ABIERTO')                       AS abiertos,
+          COUNT(*) FILTER (WHERE estado='EN_PROCESO')                    AS en_proceso,
+          COUNT(*) FILTER (WHERE estado='CONTESTADO')                    AS contestados,
+          COUNT(*) FILTER (WHERE estado='CERRADO')                       AS cerrados,
+          COUNT(*) FILTER (WHERE estado IN ('ABIERTO','EN_PROCESO'))     AS activos,
+          COUNT(*) FILTER (WHERE fecha_recibido >= CURRENT_DATE)         AS casos_hoy,
+          COUNT(*) FILTER (WHERE fecha_recibido >= CURRENT_DATE - INTERVAL '7 days') AS casos_semana,
+          COUNT(*) FILTER (WHERE fecha_vencimiento < NOW() AND estado != 'CERRADO') AS vencidos,
+          COUNT(*) FILTER (WHERE fecha_vencimiento >= NOW()
+                            AND fecha_vencimiento <= NOW() + INTERVAL '48 hours'
+                            AND estado != 'CERRADO')                     AS por_vencer,
+          COUNT(*) FILTER (WHERE asignado_a IS NOT NULL)                 AS asignados,
+          COUNT(*) FILTER (WHERE acuse_enviado = TRUE)                   AS con_acuse,
+          COUNT(*) FILTER (WHERE estado IN ('CONTESTADO','CERRADO'))     AS respondidos,
+          -- Breakdown PQR vs Tutela (últimos 7 días = "lo que entró al correo")
+          COUNT(*) FILTER (WHERE tipo_caso IN ('PETICION','QUEJA','RECLAMO','SOLICITUD','SUGERENCIA')
+                            AND fecha_recibido >= CURRENT_DATE - INTERVAL '7 days') AS ingresos_pqr_semana,
+          COUNT(*) FILTER (WHERE tipo_caso = 'TUTELA'
+                            AND fecha_recibido >= CURRENT_DATE - INTERVAL '7 days') AS ingresos_tutela_semana,
+          -- Pulso TUTELAS (SLA legal 10 días, tracking separado)
+          COUNT(*) FILTER (WHERE tipo_caso='TUTELA' AND estado IN ('ABIERTO','EN_PROCESO')) AS tutelas_activas,
+          COUNT(*) FILTER (WHERE tipo_caso='TUTELA' AND fecha_vencimiento < NOW() AND estado != 'CERRADO') AS tutelas_vencidas,
+          COUNT(*) FILTER (WHERE tipo_caso='TUTELA' AND fecha_vencimiento >= NOW()
+                            AND fecha_vencimiento <= NOW() + INTERVAL '48 hours'
+                            AND estado != 'CERRADO') AS tutelas_por_vencer,
+          COUNT(*) FILTER (WHERE tipo_caso='TUTELA')                     AS tutelas_total,
+          -- Tutelas escaladas de PQR previo (poblado por master_worker al ingestar)
+          COUNT(*) FILTER (WHERE tipo_caso='TUTELA'
+                            AND COALESCE(array_length(pqr_origenes, 1), 0) > 0) AS tutelas_escaladas
+        FROM pqrs_casos {w}
+    """, *params)
+    total_casos        = kpi['total_casos']
+    total_criticos     = kpi['total_criticos']
+    abiertos           = kpi['abiertos']
+    en_proceso         = kpi['en_proceso']
+    contestados        = kpi['contestados']
+    cerrados           = kpi['cerrados']
+    activos            = kpi['activos']
+    casos_hoy          = kpi['casos_hoy']
+    casos_semana       = kpi['casos_semana']
+    vencidos           = kpi['vencidos']
+    por_vencer         = kpi['por_vencer']
+    asignados          = kpi['asignados']
+    con_acuse          = kpi['con_acuse']
+    respondidos        = kpi['respondidos']
+    ingresos_pqr       = kpi['ingresos_pqr_semana']
+    ingresos_tutela    = kpi['ingresos_tutela_semana']
+    tutelas_activas    = kpi['tutelas_activas']
+    tutelas_vencidas   = kpi['tutelas_vencidas']
+    tutelas_por_vencer = kpi['tutelas_por_vencer']
+    tutelas_total      = kpi['tutelas_total']
+    tutelas_escaladas  = kpi['tutelas_escaladas']
 
     estados_records = await conn.fetch(f"SELECT estado, COUNT(*) as count FROM pqrs_casos {w} GROUP BY estado", *params)
     distribucion_estados = {r['estado']: r['count'] for r in estados_records}
@@ -62,7 +108,7 @@ async def get_dashboard_stats(
         FROM pqrs_casos c
         LEFT JOIN clientes_tenant t ON t.id = c.cliente_id
         {w}
-        ORDER BY c.fecha_recibido DESC LIMIT 50
+        ORDER BY c.fecha_recibido DESC LIMIT 10
     """, *params)
     ultimos_casos = [
         {
@@ -82,6 +128,8 @@ async def get_dashboard_stats(
 
     porcentaje_efectividad = round((cerrados / total_casos * 100), 1) if total_casos > 0 else 0
 
+    tasa_escalamiento = round((tutelas_escaladas / tutelas_total * 100), 1) if tutelas_total > 0 else 0
+
     return {
         "kpis": {
             "total_casos": total_casos,
@@ -93,7 +141,22 @@ async def get_dashboard_stats(
             "cerrados": cerrados,
             "casos_hoy": casos_hoy,
             "casos_semana": casos_semana,
-            "vencidos": vencidos
+            "vencidos": vencidos,
+            "por_vencer": por_vencer,
+            "activos": activos
+        },
+        "ingresos_semana": {
+            "pqr": ingresos_pqr,
+            "tutela": ingresos_tutela,
+            "total": ingresos_pqr + ingresos_tutela,
+        },
+        "tutelas": {
+            "activas": tutelas_activas,
+            "vencidas": tutelas_vencidas,
+            "por_vencer": tutelas_por_vencer,
+            "total": tutelas_total,
+            "escaladas_de_pqr": tutelas_escaladas,
+            "tasa_escalamiento": tasa_escalamiento,
         },
         "trazabilidad": {
             "recibidos":   total_casos,
@@ -128,8 +191,40 @@ async def get_rendimiento(
     intervalos = {"dia": 1, "semana": 7, "mes": 30}
     dias = intervalos.get(periodo, 7)
 
+    # Subqueries de eficiencia (idénticas en ambas ramas). Calculadas por usuario.
+    # NOTA: usan ventana del período ($1 = dias) para borradores; PQRs gestionados
+    # y escalamiento se miden sobre la historia completa del abogado.
+    efic_subq = """
+      (SELECT COUNT(*) FROM audit_log_respuestas a
+        WHERE a.usuario_id = u.id AND a.accion='BORRADOR_GENERADO'
+          AND a.created_at >= NOW() - make_interval(days => $1)) AS borradores_generados,
+      (SELECT COUNT(*) FROM audit_log_respuestas a
+        WHERE a.usuario_id = u.id AND a.accion='BORRADOR_EDITADO'
+          AND a.created_at >= NOW() - make_interval(days => $1)) AS borradores_editados,
+      (SELECT COUNT(*) FROM audit_log_respuestas a
+        WHERE a.usuario_id = u.id AND a.accion='ENVIADO_LOTE'
+          AND a.created_at >= NOW() - make_interval(days => $1)) AS borradores_enviados,
+      (SELECT ROUND(AVG(similarity_score)::numeric, 3) FROM borrador_feedback bf
+        WHERE bf.usuario_id = u.id
+          AND bf.created_at >= NOW() - make_interval(days => $1)) AS similarity_avg,
+      (SELECT ROUND(AVG(EXTRACT(EPOCH FROM (e.created_at - g.created_at))/60)::numeric, 1)
+         FROM audit_log_respuestas g
+         JOIN audit_log_respuestas e ON e.caso_id = g.caso_id AND e.accion='ENVIADO_LOTE'
+        WHERE g.accion='BORRADOR_GENERADO' AND g.usuario_id = u.id
+          AND g.created_at >= NOW() - make_interval(days => $1)) AS review_time_avg_min,
+      -- PQRs gestionados (respondidos) por este abogado (toda la historia)
+      (SELECT COUNT(*) FROM pqrs_casos pq
+        WHERE pq.asignado_a = u.id AND pq.tipo_caso != 'TUTELA'
+          AND pq.estado IN ('CERRADO','CONTESTADO')) AS pqrs_gestionados,
+      -- De esos PQRs, cuántos figuran como origen de alguna tutela posterior
+      (SELECT COUNT(DISTINCT pq.id) FROM pqrs_casos pq
+         JOIN pqrs_casos t ON pq.id = ANY(t.pqr_origenes)
+        WHERE pq.asignado_a = u.id AND pq.tipo_caso != 'TUTELA'
+          AND t.tipo_caso = 'TUTELA') AS pqrs_escalaron
+    """
+
     if target_tenant is None:
-        rows = await conn.fetch("""
+        rows = await conn.fetch(f"""
             SELECT
                 u.id, u.nombre, u.email,
                 t.nombre AS cliente_nombre,
@@ -139,7 +234,8 @@ async def get_rendimiento(
                 COUNT(c.id) FILTER (WHERE c.estado = 'CERRADO' AND c.fecha_asignacion >= NOW() - make_interval(days => $1)) AS cerrados_periodo,
                 COUNT(c.id) FILTER (WHERE c.fecha_vencimiento < NOW() AND c.estado != 'CERRADO') AS vencidos,
                 COUNT(c.id) FILTER (WHERE c.nivel_prioridad IN ('ALTA','CRITICA')) AS criticos,
-                ROUND(AVG(EXTRACT(EPOCH FROM (c.updated_at - c.fecha_asignacion)) / 3600)::numeric, 1) AS avg_horas_resolucion
+                ROUND(AVG(EXTRACT(EPOCH FROM (c.updated_at - c.fecha_asignacion)) / 3600)::numeric, 1) AS avg_horas_resolucion,
+                {efic_subq}
             FROM usuarios u
             LEFT JOIN pqrs_casos c ON c.asignado_a = u.id
             LEFT JOIN clientes_tenant t ON t.id = u.cliente_id
@@ -148,7 +244,7 @@ async def get_rendimiento(
             ORDER BY asignados_total DESC
         """, dias)
     else:
-        rows = await conn.fetch("""
+        rows = await conn.fetch(f"""
             SELECT
                 u.id, u.nombre, u.email,
                 NULL::text AS cliente_nombre,
@@ -158,7 +254,8 @@ async def get_rendimiento(
                 COUNT(c.id) FILTER (WHERE c.estado = 'CERRADO' AND c.fecha_asignacion >= NOW() - make_interval(days => $1)) AS cerrados_periodo,
                 COUNT(c.id) FILTER (WHERE c.fecha_vencimiento < NOW() AND c.estado != 'CERRADO') AS vencidos,
                 COUNT(c.id) FILTER (WHERE c.nivel_prioridad IN ('ALTA','CRITICA')) AS criticos,
-                ROUND(AVG(EXTRACT(EPOCH FROM (c.updated_at - c.fecha_asignacion)) / 3600)::numeric, 1) AS avg_horas_resolucion
+                ROUND(AVG(EXTRACT(EPOCH FROM (c.updated_at - c.fecha_asignacion)) / 3600)::numeric, 1) AS avg_horas_resolucion,
+                {efic_subq}
             FROM usuarios u
             LEFT JOIN pqrs_casos c ON c.asignado_a = u.id
             WHERE u.cliente_id = $2::uuid AND u.rol IN ('analista', 'abogado')
@@ -166,8 +263,13 @@ async def get_rendimiento(
             ORDER BY asignados_total DESC
         """, dias, target_tenant)
 
-    abogados = [
-        {
+    abogados = []
+    for r in rows:
+        bg = r["borradores_generados"] or 0
+        be = r["borradores_editados"] or 0
+        pq_gest = r["pqrs_gestionados"] or 0
+        pq_esc = r["pqrs_escalaron"] or 0
+        abogados.append({
             "id": str(r["id"]),
             "nombre": r["nombre"],
             "email": r["email"],
@@ -179,10 +281,19 @@ async def get_rendimiento(
             "vencidos": r["vencidos"] or 0,
             "criticos": r["criticos"] or 0,
             "tasa_resolucion": round((r["cerrados_total"] / r["asignados_total"] * 100), 1) if r["asignados_total"] else 0,
-            "avg_horas_resolucion": float(r["avg_horas_resolucion"]) if r["avg_horas_resolucion"] else None
-        }
-        for r in rows
-    ]
+            "avg_horas_resolucion": float(r["avg_horas_resolucion"]) if r["avg_horas_resolucion"] else None,
+            # === Eficiencia (Fase 1+2) ===
+            "borradores_generados": bg,
+            "borradores_editados": be,
+            "borradores_enviados": r["borradores_enviados"] or 0,
+            "ratio_edicion": round(be / bg * 100, 1) if bg else 0,
+            "similarity_avg": float(r["similarity_avg"]) if r["similarity_avg"] is not None else None,
+            "review_time_avg_min": float(r["review_time_avg_min"]) if r["review_time_avg_min"] is not None else None,
+            "pqrs_gestionados": pq_gest,
+            "pqrs_escalaron_a_tutela": pq_esc,
+            "tutelas_evitadas": max(pq_gest - pq_esc, 0),
+            "tasa_prevencion": round((pq_gest - pq_esc) / pq_gest * 100, 1) if pq_gest else 0,
+        })
 
     return {"periodo": periodo, "abogados": abogados}
 
@@ -240,6 +351,11 @@ async def rendimiento_tendencia(
             FROM pqrs_casos WHERE enviado_at IS NOT NULL AND enviado_at >= NOW() - make_interval(days => $1)
             GROUP BY d ORDER BY d
         """, dias)
+        tut = await conn.fetch("""
+            SELECT DATE(fecha_recibido AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
+            FROM pqrs_casos WHERE tipo_caso = 'TUTELA' AND fecha_recibido >= NOW() - make_interval(days => $1)
+            GROUP BY d ORDER BY d
+        """, dias)
     else:
         tid = uuid.UUID(cliente_id) if (es_super and cliente_id) else uuid.UUID(current_user.tenant_uuid)
         rec = await conn.fetch("""
@@ -252,11 +368,17 @@ async def rendimiento_tendencia(
             FROM pqrs_casos WHERE cliente_id = $1 AND enviado_at IS NOT NULL AND enviado_at >= NOW() - make_interval(days => $2)
             GROUP BY d ORDER BY d
         """, tid, dias)
+        tut = await conn.fetch("""
+            SELECT DATE(fecha_recibido AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
+            FROM pqrs_casos WHERE cliente_id = $1 AND tipo_caso = 'TUTELA' AND fecha_recibido >= NOW() - make_interval(days => $2)
+            GROUP BY d ORDER BY d
+        """, tid, dias)
 
     recibidos = {str(r["d"]): r["n"] for r in rec}
     cerrados  = {str(r["d"]): r["n"] for r in cer}
-    all_dates = sorted(set(recibidos) | set(cerrados))
-    return [{"fecha": d, "recibidos": recibidos.get(d, 0), "cerrados": cerrados.get(d, 0)} for d in all_dates]
+    tutelas   = {str(r["d"]): r["n"] for r in tut}
+    all_dates = sorted(set(recibidos) | set(cerrados) | set(tutelas))
+    return [{"fecha": d, "recibidos": recibidos.get(d, 0), "cerrados": cerrados.get(d, 0), "tutelas": tutelas.get(d, 0)} for d in all_dates]
 
 
 @router.get("/rendimiento/{abogado_id}/actividad")

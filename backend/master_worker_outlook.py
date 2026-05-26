@@ -17,6 +17,52 @@ import uuid as _uuid
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MASTER_WORKER")
 
+# Detector de "tutela escalada de PQR previo" — feature de calidad de servicio.
+# Captura el prefijo de 8 hex del id (acuse: PQRS-{year}-{id[:8]}).
+RAD_PATTERN = re.compile(r'\bPQRS?-\d{4}-([A-F0-9]{6,12})\b', re.IGNORECASE)
+
+async def detectar_pqr_origenes(conn, db_id, cliente_id, email_origen, cuerpo):
+    """
+    Para una TUTELA recién insertada, busca PQRs previos del mismo demandante
+    en los últimos 90 días que probablemente la originaron (calidad de servicio).
+
+    Estrategias:
+      A. Match por email_origen (mismo demandante), ventana 90 días, tipo != TUTELA.
+      B. Match por radicado citado en cuerpo (formato PQRS-YYYY-HHHHHHHH).
+
+    Retorna lista de UUIDs (puede ser vacía).
+    """
+    if not email_origen:
+        return []
+
+    # A — mismo email_origen en últimos 90 días
+    rows_a = await conn.fetch(
+        """SELECT id FROM pqrs_casos
+           WHERE cliente_id = $1
+             AND LOWER(email_origen) = LOWER($2)
+             AND fecha_recibido >= NOW() - INTERVAL '90 days'
+             AND tipo_caso != 'TUTELA'
+             AND id != $3""",
+        cliente_id, email_origen, db_id
+    )
+    ids_match = {r['id'] for r in rows_a}
+
+    # B — radicados citados en el cuerpo de la tutela
+    if cuerpo:
+        prefixes = sorted({m.upper() for m in RAD_PATTERN.findall(cuerpo)})
+        if prefixes:
+            rows_b = await conn.fetch(
+                """SELECT id FROM pqrs_casos
+                   WHERE cliente_id = $1
+                     AND tipo_caso != 'TUTELA'
+                     AND id != $2
+                     AND UPPER(SUBSTRING(id::text, 1, 8)) = ANY($3::text[])""",
+                cliente_id, db_id, prefixes
+            )
+            ids_match.update(r['id'] for r in rows_b)
+
+    return list(ids_match)
+
 # Infraestructura V2 — worker usa aequitas_worker (BYPASSRLS nativo)
 DATABASE_URL = os.environ.get("WORKER_DB_URL", "postgresql://aequitas_worker:changeme_worker@postgres_v2:5432/pqrs_v2")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis_v2:6379")
@@ -291,6 +337,26 @@ async def master_worker():
                     if not db_id:
                         logger.info(f"⏭️  Email ya procesado, ignorando: {em['id'][:20]}")
                         continue
+
+                    # Auto-match: si es TUTELA, ¿hay PQR previo del mismo demandante?
+                    # Señal de calidad de servicio: tutela = consecuencia de mala atención.
+                    if resultado.tipo.value == "TUTELA":
+                        try:
+                            origenes = await detectar_pqr_origenes(
+                                conn, db_id, c_id, em['sender'], em['body']
+                            )
+                            if origenes:
+                                await conn.execute(
+                                    "UPDATE pqrs_casos SET pqr_origenes = $1 WHERE id = $2",
+                                    origenes, db_id
+                                )
+                                logger.info(
+                                    f"⚖️  TUTELA {str(db_id)[:8]} escalada de "
+                                    f"{len(origenes)} PQR(s) previo(s): "
+                                    f"{[str(o)[:8] for o in origenes]}"
+                                )
+                        except Exception as e:
+                            logger.warning(f"⚠️  Auto-match pqr_origenes falló para {db_id}: {e}")
 
                     # Acuse de recibo solo para Abogados Recovery (excluye tutelas
                     # y remitentes judiciales — DT-41: no responder un oficio de

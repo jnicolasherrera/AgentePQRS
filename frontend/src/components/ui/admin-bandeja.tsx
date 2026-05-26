@@ -164,21 +164,21 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
       {/* Barra de filtros */}
       <div className="agente items-center gap-3 agente-wrap">
         <div className="relative agente-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           <input
             type="text"
             placeholder="Buscar por asunto o email..."
             value={q}
             onChange={e => { setQ(e.target.value); setPage(1); }}
-            className="w-full pl-9 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-primary placeholder-slate-600 transition-colors"
+            className="w-full pl-9 pr-4 py-2 bg-muted border border-border rounded-xl text-sm text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground transition-colors"
           />
         </div>
         <select value={tipo} onChange={e => { setTipo(e.target.value); setPage(1); }}
-          className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-primary cursor-pointer">
+          className="bg-muted border border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary cursor-pointer">
           {TIPOS.map(t => <option key={t} value={t}>{t || "Todos los tipos"}</option>)}
         </select>
         <select value={estado} onChange={e => { setEstado(e.target.value); setPage(1); }}
-          className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-primary cursor-pointer">
+          className="bg-muted border border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary cursor-pointer">
           {ESTADOS.map(s => <option key={s} value={s}>{s || "Todos los estados"}</option>)}
         </select>
         <button
@@ -186,17 +186,17 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
           className={`agente items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold transition-all ${
             filtroNoPqrs
               ? "bg-red-500/20 border border-red-500/40 text-red-400 shadow-[0_0_10px_rgba(239,68,68,0.2)]"
-              : "bg-white/5 border border-white/10 text-slate-400 hover:bg-white/10"
+              : "bg-muted border border-border text-muted-foreground hover:bg-secondary"
           }`}
         >
           <XCircle className="w-3.5 h-3.5" />
           No PQRS
         </button>
         <button onClick={fetchCasos}
-          className="p-2 bg-white/5 border border-white/10 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors">
+          className="p-2 bg-muted border border-border rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
           <RefreshCw className="w-4 h-4" />
         </button>
-        <span className="text-xs text-slate-500 ml-auto">{total} casos</span>
+        <span className="text-xs text-muted-foreground ml-auto">{total} casos</span>
       </div>
 
       {/* Action bar when items selected */}
@@ -223,63 +223,63 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
       </AnimatePresence>
 
       {/* Tabla */}
-      <div className="bg-white/[0.03] border border-white/8 rounded-2xl overflow-hidden">
+      <div className="glass-panel rounded-2xl overflow-hidden">
         {loading ? (
           <div className="agente items-center justify-center py-20">
             <div className="w-8 h-8 rounded-full border-t-2 border-primary animate-spin" />
           </div>
         ) : items.length === 0 ? (
-          <div className="text-center py-20 text-slate-500 text-sm">No se encontraron casos.</div>
+          <div className="text-center py-20 text-muted-foreground text-sm">No se encontraron casos.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="bg-white/[0.02] text-slate-400 text-[10px] font-black uppercase tracking-widest border-b border-white/5">
+                <tr className="bg-muted text-muted-foreground text-[10px] font-black uppercase tracking-widest border-b border-border">
                   <th className="px-3 py-3 w-10">
-                    <button onClick={toggleSelectAll} className="text-slate-400 hover:text-white transition-colors">
+                    <button onClick={toggleSelectAll} className="text-muted-foreground hover:text-foreground transition-colors">
                       {seleccionados.size === items.length && items.length > 0
                         ? <CheckSquare className="w-4 h-4 text-red-400" />
                         : <Square className="w-4 h-4" />
                       }
                     </button>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer select-none hover:text-white transition-colors" onClick={() => toggleSort("radicado")}>
+                  <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("radicado")}>
                     <span className="agente items-center gap-1">Radicado <SortIcon k="radicado" /></span>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer select-none hover:text-white transition-colors" onClick={() => toggleSort("asunto")}>
+                  <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("asunto")}>
                     <span className="agente items-center gap-1">Asunto <SortIcon k="asunto" /></span>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer select-none hover:text-white transition-colors" onClick={() => toggleSort("tipo")}>
+                  <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("tipo")}>
                     <span className="agente items-center gap-1">Tipo <SortIcon k="tipo" /></span>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer select-none hover:text-white transition-colors" onClick={() => toggleSort("estado")}>
+                  <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("estado")}>
                     <span className="agente items-center gap-1">Estado <SortIcon k="estado" /></span>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer select-none hover:text-white transition-colors" onClick={() => toggleSort("asignado")}>
+                  <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("asignado")}>
                     <span className="agente items-center gap-1">Asignado a <SortIcon k="asignado" /></span>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer select-none hover:text-white transition-colors" onClick={() => toggleSort("prioridad")}>
+                  <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("prioridad")}>
                     <span className="agente items-center gap-1">Prioridad <SortIcon k="prioridad" /></span>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer select-none hover:text-white transition-colors" onClick={() => toggleSort("recibido")}>
+                  <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("recibido")}>
                     <span className="agente items-center gap-1">Recibido <SortIcon k="recibido" /></span>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer select-none hover:text-white transition-colors" onClick={() => toggleSort("vencimiento")}>
+                  <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("vencimiento")}>
                     <span className="agente items-center gap-1">Vencimiento <SortIcon k="vencimiento" /></span>
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/[0.04]">
+              <tbody className="divide-y divide-border">
                 {items.map((caso, i) => (
                   <motion.tr key={caso.id}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: i * 0.015 }}
                     onClick={() => setSelectedId(caso.id)}
-                    className={`cursor-pointer hover:bg-white/[0.03] transition-colors ${!caso.es_pqrs ? "border-l-2 border-l-red-500/50" : ""} ${seleccionados.has(caso.id) ? "bg-red-500/5" : ""}`}
+                    className={`cursor-pointer hover:bg-muted transition-colors ${!caso.es_pqrs ? "border-l-2 border-l-red-500/50" : ""} ${seleccionados.has(caso.id) ? "bg-red-500/5" : ""}`}
                   >
                     <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
-                      <button onClick={() => toggleSeleccion(caso.id)} className="text-slate-400 hover:text-white transition-colors">
+                      <button onClick={() => toggleSeleccion(caso.id)} className="text-muted-foreground hover:text-foreground transition-colors">
                         {seleccionados.has(caso.id)
                           ? <CheckSquare className="w-4 h-4 text-red-400" />
                           : <Square className="w-4 h-4" />
@@ -292,8 +292,8 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                       </span>
                     </td>
                     <td className="px-4 py-3 max-w-[220px]">
-                      <p className="text-white font-medium truncate">{caso.asunto}</p>
-                      <p className="text-slate-500 text-[10px] truncate">{caso.email_origen}</p>
+                      <p className="text-foreground font-medium truncate">{caso.asunto}</p>
+                      <p className="text-muted-foreground text-[10px] truncate">{caso.email_origen}</p>
                       {!caso.es_pqrs && (
                         <span className="inline-block mt-0.5 text-[9px] px-1.5 py-0.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded">
                           No PQRS
@@ -301,40 +301,40 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-[10px] font-bold px-2 py-1 rounded-lg border bg-transparent ${TIPO_CLS[caso.tipo_caso] ?? "text-slate-400 border-white/10"}`}>
+                      <span className={`text-[10px] font-bold px-2 py-1 rounded-lg border bg-transparent ${TIPO_CLS[caso.tipo_caso] ?? "text-muted-foreground border-border"}`}>
                         {caso.tipo_caso}
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs font-bold ${ESTADO_CLS[caso.estado] ?? "text-slate-400"}`}>
+                      <span className={`text-xs font-bold ${ESTADO_CLS[caso.estado] ?? "text-muted-foreground"}`}>
                         {caso.estado}
                       </span>
                     </td>
                     <td className="px-4 py-3">
                       {caso.asignado_nombre ? (
                         <div>
-                          <p className="text-white text-xs font-medium">{caso.asignado_nombre}</p>
-                          <p className="text-slate-500 text-[10px]">{caso.asignado_email}</p>
+                          <p className="text-foreground text-xs font-medium">{caso.asignado_nombre}</p>
+                          <p className="text-muted-foreground text-[10px]">{caso.asignado_email}</p>
                         </div>
                       ) : (
-                        <span className="text-slate-600 text-xs italic">Sin asignar</span>
+                        <span className="text-muted-foreground/70 text-xs italic">Sin asignar</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${PRIORIDAD_CLS[caso.nivel_prioridad] ?? "text-slate-400 border-white/10"}`}>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${PRIORIDAD_CLS[caso.nivel_prioridad] ?? "text-muted-foreground border-border"}`}>
                         {caso.nivel_prioridad}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-slate-400 text-xs">
+                    <td className="px-4 py-3 text-muted-foreground text-xs">
                       {caso.fecha_recibido ? new Date(caso.fecha_recibido).toLocaleDateString() : "\u2014"}
                     </td>
                     <td className="px-4 py-3">
                       {caso.fecha_vencimiento ? (
-                        <span className={`text-xs font-bold ${new Date(caso.fecha_vencimiento) < new Date() ? "text-red-400" : "text-slate-400"}`}>
+                        <span className={`text-xs font-bold ${new Date(caso.fecha_vencimiento) < new Date() ? "text-red-400" : "text-muted-foreground"}`}>
                           {new Date(caso.fecha_vencimiento).toLocaleDateString()}
                         </span>
                       ) : (
-                        <span className="text-slate-600 text-xs">{"\u2014"}</span>
+                        <span className="text-muted-foreground/70 text-xs">{"\u2014"}</span>
                       )}
                     </td>
                   </motion.tr>
@@ -345,15 +345,15 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
         )}
 
         {/* Pagination */}
-        <div className="agente items-center justify-between px-5 py-3 border-t border-white/5">
+        <div className="agente items-center justify-between px-5 py-3 border-t border-border">
           <div className="agente items-center gap-2">
-            <span className="text-[10px] text-slate-600 uppercase tracking-wider font-semibold">Mostrar:</span>
+            <span className="text-[10px] text-muted-foreground/70 uppercase tracking-wider font-semibold">Mostrar:</span>
             {PAGE_SIZES.map(s => (
               <button
                 key={s}
                 onClick={() => { setPageSize(s); setPage(1); }}
                 className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                  pageSize === s ? "bg-primary/20 text-primary border border-primary/30" : "bg-white/5 text-slate-500 hover:text-white border border-white/10"
+                  pageSize === s ? "bg-primary/20 text-primary border border-primary/30" : "bg-muted text-muted-foreground hover:text-foreground border border-border"
                 }`}
               >
                 {s}
@@ -362,12 +362,12 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
           </div>
           <div className="agente items-center gap-3">
             <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}
-              className="p-2 rounded-lg bg-white/5 text-slate-400 hover:text-white disabled:opacity-30 transition-colors">
+              className="p-2 rounded-lg bg-muted text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors">
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <span className="text-xs text-slate-500">Pagina {page} de {totalPages || 1}</span>
+            <span className="text-xs text-muted-foreground">Pagina {page} de {totalPages || 1}</span>
             <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
-              className="p-2 rounded-lg bg-white/5 text-slate-400 hover:text-white disabled:opacity-30 transition-colors">
+              className="p-2 rounded-lg bg-muted text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors">
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
@@ -392,15 +392,15 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               onClick={e => e.stopPropagation()}
-              className="bg-[#0d1117] border border-red-500/30 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl"
+              className="bg-card border border-red-500/30 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl"
             >
               <div className="agente items-center gap-3 mb-4">
                 <div className="p-2 bg-red-500/10 rounded-xl">
                   <AlertTriangle className="w-6 h-6 text-red-400" />
                 </div>
-                <h3 className="text-lg font-bold text-white">Confirmar eliminacion</h3>
+                <h3 className="text-lg font-bold text-foreground">Confirmar eliminacion</h3>
               </div>
-              <p className="text-sm text-slate-300 mb-6">
+              <p className="text-sm text-foreground/80 mb-6">
                 Se eliminar{seleccionados.size > 1 ? "an" : "a"}{" "}
                 <strong className="text-red-400">{seleccionados.size} caso{seleccionados.size > 1 ? "s" : ""}</strong>.
                 Esta accion no se puede deshacer.
@@ -409,7 +409,7 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                 <button
                   onClick={() => setShowDeleteModal(false)}
                   disabled={deleting}
-                  className="px-4 py-2 bg-white/5 border border-white/10 text-slate-300 text-sm font-bold rounded-xl hover:bg-white/10 transition-all disabled:opacity-50"
+                  className="px-4 py-2 bg-muted border border-border text-foreground/80 text-sm font-bold rounded-xl hover:bg-secondary transition-all disabled:opacity-50"
                 >
                   Cancelar
                 </button>
@@ -419,7 +419,7 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                   className="agente items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-bold rounded-xl transition-all disabled:opacity-50"
                 >
                   {deleting
-                    ? <div className="w-4 h-4 border-2 border-white/50 border-t-white rounded-full animate-spin" />
+                    ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     : <Trash2 className="w-4 h-4" />
                   }
                   {deleting ? "Eliminando..." : "Eliminar"}

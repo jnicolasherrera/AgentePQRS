@@ -61,19 +61,19 @@ export const VirtualizedPQRSBoard = () => {
             <input 
                 type="text" 
                 placeholder="Buscar por ID o Asunto..."
-                className="bg-transparent border-none outline-none text-white w-96 placeholder:text-slate-500"
+                className="bg-transparent border-none outline-none text-foreground w-96 placeholder:text-muted-foreground"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
             />
         </div>
-        <div className="text-sm font-medium text-slate-400 agente items-center gap-2">
+        <div className="text-sm font-medium text-muted-foreground agente items-center gap-2">
            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-           Mostrando <span className="text-white font-bold">{filteredTickets.length.toLocaleString()}</span> casos
+           Mostrando <span className="text-foreground font-bold">{filteredTickets.length.toLocaleString()}</span> casos
         </div>
       </div>
 
       {/* HEADER DE COLUMNAS */}
-      <div className="agente px-6 py-3 border-b border-white/10 bg-white/[0.02] text-xs font-bold text-slate-400 uppercase tracking-wider rounded-t-xl mx-px">
+      <div className="agente px-6 py-3 border-b border-border bg-muted text-xs font-bold text-muted-foreground uppercase tracking-wider rounded-t-xl mx-px">
          <div className="w-[13%]">Cédula / ID</div>
          <div className="w-[28%]">Correo Original</div>
          <div className="w-[14%]">Cliente</div>
@@ -86,7 +86,7 @@ export const VirtualizedPQRSBoard = () => {
       {/* CONTENEDOR VIRTUAL */}
       <div 
         ref={parentRef} 
-        className="agente-1 overflow-auto rounded-b-2xl glass-panel border border-white/5 shadow-inner"
+        className="agente-1 overflow-auto rounded-b-2xl glass-panel border border-border shadow-inner"
       >
         <div
           style={{
@@ -100,7 +100,7 @@ export const VirtualizedPQRSBoard = () => {
             
             // Calculo de dias restantes
             let diasRestantesText = "S/D";
-            let colorVencimiento = "text-slate-500";
+            let colorVencimiento = "text-muted-foreground";
             if (t.vencimientoRaw) {
                const diffTime = new Date(t.vencimientoRaw).getTime() - new Date().getTime();
                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -136,18 +136,18 @@ export const VirtualizedPQRSBoard = () => {
                   height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
-                className="px-6 py-4 agente items-center justify-between border-b border-white/5 hover:bg-white/5 transition-colors group cursor-pointer"
+                className="px-6 py-4 agente items-center justify-between border-b border-border hover:bg-muted transition-colors group cursor-pointer"
               >
                 {/* Cédula y Fuente */}
                 <div className="w-[13%]">
-                  <div className={`text-sm font-black mb-1 group-hover:text-primary transition-colors pr-2 truncate ${t.cedula !== 'S/N' ? 'text-white' : 'text-slate-500'}`}>{t.cedula}</div>
-                  <div className={`text-xs font-medium ${t.tipo === 'TUTELA' ? 'text-red-400' : 'text-slate-500'}`}>{t.source}</div>
+                  <div className={`text-sm font-black mb-1 group-hover:text-primary transition-colors pr-2 truncate ${t.cedula !== 'S/N' ? 'text-foreground' : 'text-muted-foreground'}`}>{t.cedula}</div>
+                  <div className={`text-xs font-medium ${t.tipo === 'TUTELA' ? 'text-red-400' : 'text-muted-foreground'}`}>{t.source}</div>
                 </div>
 
                 {/* Email y Asunto */}
                 <div className="w-[28%] overflow-hidden">
-                  <div className="text-sm font-bold text-slate-200 truncate pr-4 leading-tight">{t.client}</div>
-                  <div className="text-xs text-slate-500 truncate pr-4 mt-1">{t.subject}</div>
+                  <div className="text-sm font-bold text-foreground/90 truncate pr-4 leading-tight">{t.client}</div>
+                  <div className="text-xs text-muted-foreground truncate pr-4 mt-1">{t.subject}</div>
                 </div>
 
                 {/* Cliente / Tenant */}
@@ -160,7 +160,7 @@ export const VirtualizedPQRSBoard = () => {
                 {/* Estado */}
                 <div className="w-[13%] agente items-center gap-2">
                    {getStatusIcon(t.status)}
-                   <span className="text-sm font-medium text-slate-300">{t.status}</span>
+                   <span className="text-sm font-medium text-foreground/80">{t.status}</span>
                 </div>
 
                 {/* Severidad */}
@@ -172,13 +172,13 @@ export const VirtualizedPQRSBoard = () => {
 
                 {/* Fecha Recepción */}
                 <div className="w-[10%]">
-                   <div className="text-sm text-slate-400 font-medium">{t.date}</div>
+                   <div className="text-sm text-muted-foreground font-medium">{t.date}</div>
                 </div>
 
                 {/* Fecha Vencimiento y Acciones */}
                 <div className="w-[10%] agente items-center justify-between">
                    <div className={`text-sm ${colorVencimiento}`}>{diasRestantesText}</div>
-                   <button className="opacity-0 group-hover:opacity-100 p-2 hover:bg-white/10 rounded-lg transition-all text-slate-300">
+                   <button className="opacity-0 group-hover:opacity-100 p-2 hover:bg-secondary rounded-lg transition-all text-foreground/80">
                       <MoreVertical className="w-4 h-4" />
                    </button>
                 </div>
