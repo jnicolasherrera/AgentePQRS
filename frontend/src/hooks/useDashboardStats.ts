@@ -14,7 +14,12 @@ export function useDashboardStats(selectedClienteId?: string) {
       : "/stats/dashboard";
     api.get<DashboardStats>(url)
       .then((res) => {
-        setStats(res.data);
+        // Evita re-renders no-op: solo actualiza si el payload cambió.
+        setStats((prev) => {
+          const next = res.data;
+          if (prev && JSON.stringify(prev) === JSON.stringify(next)) return prev;
+          return next;
+        });
         setLoading(false);
       })
       .catch((err) => {
@@ -25,8 +30,17 @@ export function useDashboardStats(selectedClienteId?: string) {
 
   useEffect(() => {
     fetchStats();
-    const interval = setInterval(fetchStats, 10000);
-    return () => clearInterval(interval);
+    // Polling pausado cuando la pestaña está oculta (evita carga en background olvidado).
+    const tick = () => {
+      if (document.visibilityState === "visible") fetchStats();
+    };
+    const interval = setInterval(tick, 10000);
+    const onVisible = () => { if (document.visibilityState === "visible") fetchStats(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [fetchStats]);
 
   return { stats, loading, refetch: fetchStats };
