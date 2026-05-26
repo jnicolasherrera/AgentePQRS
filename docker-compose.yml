@@ -2,7 +2,10 @@ version: "3.8"
 
 services:
   postgres_v2:
-    image: postgres:15-alpine
+    # pgvector/pgvector:pg15 = postgres:15 oficial + extensión pgvector pre-compilada.
+    # Drop-in compatible con el data del volumen anterior (mismo PG 15).
+    # Cambiado 2026-05-26 para la Fase 1 del RAG real (migración 16_kb_rag_pgvector.sql).
+    image: pgvector/pgvector:pg15
     container_name: pqrs_v2_db
     environment:
       POSTGRES_USER: pqrs_admin
