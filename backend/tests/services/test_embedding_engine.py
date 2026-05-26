@@ -180,8 +180,14 @@ class TestClassifyException:
         ("403 Forbidden",               "auth"),
         ("429 rate limit exceeded",     "rate_limit"),
         ("Rate limit reached",          "rate_limit"),
+        ("Too many requests, retry later", "rate_limit"),
         ("503 service unavailable",     "transient"),
         ("Connection reset by peer",    "transient"),
+        # bug_005: estos antes se clasificaban mal como rate_limit por "limit"
+        ("token limit exceeded for input", "transient"),
+        ("context length limit reached",   "transient"),
+        ("max input length is 32000",      "transient"),
+        ("batch size limit is 1000",       "transient"),
     ])
     def test_clasifica_msg(self, msg, expected):
         assert _classify_exception(Exception(msg)) == expected

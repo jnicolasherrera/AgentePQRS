@@ -78,6 +78,13 @@ async def buscar_docs_similares(
     # SQL parameterizado. El operador <=> de pgvector es distancia coseno,
     # similitud = 1 - distancia. Filtramos por threshold en la WHERE para que
     # el LIMIT no nos devuelva basura cuando no hay nada cercano.
+    #
+    # bug_004 (review remoto): `tipo_caso = $5` excluye filas con
+    # tipo_caso=NULL por la semántica UNKNOWN de SQL. Las plantillas se
+    # ingestan con tipo_caso=NULL (kb_backfill._recoger_plantillas) porque
+    # plantillas_respuesta no tiene esa columna. Sin OR IS NULL toda
+    # plantilla DB queda invisible al retrieval. Aceptamos NULL como
+    # wildcard ("aplica a cualquier tipo_caso").
     sql = """
         SELECT source_type,
                source_id,
@@ -92,15 +99,23 @@ async def buscar_docs_similares(
         ORDER BY embedding <=> $1::vector
         LIMIT $4
     """
-    tipo_filter = "AND tipo_caso = $5" if tipo_caso else ""
+    tipo_filter = "AND (tipo_caso = $5 OR tipo_caso IS NULL)" if tipo_caso else ""
     sql = sql.format(tipo_filter=tipo_filter)
 
     args: list[Any] = [str(query_vec), tenant_id, threshold, top_k]
     if tipo_caso:
         args.append(tipo_caso)
 
+    # bug_010 (review remoto): HNSW + WHERE pre-LIMIT pierde recall a escala
+    # multi-tenant. Con ef_search=40 default, los 40 vecinos globales se
+    # filtran después por cliente_id+tipo_caso y muchos buenos matches se
+    # eliminan silenciosamente. Mitigación pgvector 0.8+: iterative_scan
+    # = relaxed_order itera hasta llenar el LIMIT respetando los filtros.
+    # SET LOCAL requiere transacción.
     try:
-        rows = await conn.fetch(sql, *args)
+        async with conn.transaction():
+            await conn.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
+            rows = await conn.fetch(sql, *args)
     except Exception as exc:  # noqa: BLE001 — degradar también ante errores DB
         logger.warning("rag_engine: query KB falló — sigo sin RAG (%s)", exc)
         return []

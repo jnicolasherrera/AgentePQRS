@@ -114,6 +114,7 @@ services:
       - MINIO_SECRET_KEY=adminpassword
       - MINIO_PUBLIC_URL=http://54.233.39.211:9020
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
       - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
@@ -141,6 +142,7 @@ services:
       - DATABASE_URL=postgresql://pqrs_admin:pg_password@postgres_v2:5432/pqrs_v2
       - REDIS_URL=redis://:NuSvuOWiQtGWkZleg-zwqUZzs6DewuaK@redis_v2:6379
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
       - DEMO_GMAIL_USER=democlasificador@gmail.com
       - DEMO_GMAIL_PASSWORD=${DEMO_GMAIL_PASSWORD:-}
       - DEMO_RESET_MINUTES=30

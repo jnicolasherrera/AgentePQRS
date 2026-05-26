@@ -188,12 +188,20 @@ class EmbeddingEngine:
 
 
 def _classify_exception(exc: Exception | None) -> str:
-    """Clasifica una excepción de voyageai para decidir cómo reintentar."""
+    """Clasifica una excepción de voyageai para decidir cómo reintentar.
+
+    bug_005 (review remoto): el substring "limit" desnudo matcheaba
+    errores de validación no reintentables como "token limit exceeded" /
+    "context length limit" / "max input length" como rate_limit, gastando
+    ~47s en 5 retries inútiles antes de levantar EmbeddingRateLimitError
+    con un mensaje engañoso. Ahora exigimos conjunciones claras
+    ("rate limit", "too many requests") o el código 429 explícito.
+    """
     if exc is None:
         return "unknown"
     msg = str(exc).lower()
     if "unauthorized" in msg or "invalid api" in msg or "401" in msg or "403" in msg:
         return "auth"
-    if "rate" in msg or "limit" in msg or "429" in msg:
+    if "rate limit" in msg or "too many requests" in msg or "429" in msg:
         return "rate_limit"
     return "transient"

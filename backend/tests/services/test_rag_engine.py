@@ -42,9 +42,19 @@ def _fake_engine_falla(exc):
 
 
 def _fake_conn(rows):
-    """asyncpg.Connection mock que devuelve rows fijos al fetch."""
+    """asyncpg.Connection mock que devuelve rows fijos al fetch.
+
+    Mockea también el async context manager `conn.transaction()` y
+    `conn.execute()`, que rag_engine usa para `SET LOCAL
+    hnsw.iterative_scan = relaxed_order` (bug_010).
+    """
     c = MagicMock()
     c.fetch = AsyncMock(return_value=rows)
+    c.execute = AsyncMock(return_value="SET")
+    tx = MagicMock()
+    tx.__aenter__ = AsyncMock(return_value=None)
+    tx.__aexit__ = AsyncMock(return_value=False)
+    c.transaction = MagicMock(return_value=tx)
     return c
 
 
@@ -114,7 +124,22 @@ class TestBuscarDocsSimilares:
         args = conn.fetch.call_args.args
         assert len(args) == 6  # SQL + 5 params
         assert args[5] == "TUTELA"
-        assert "tipo_caso = $5" in args[0]
+        # bug_004: el filtro debe ACEPTAR NULL como wildcard
+        assert "tipo_caso = $5 OR tipo_caso IS NULL" in args[0]
+
+    @pytest.mark.asyncio
+    async def test_bug_004_set_local_iterative_scan(self):
+        """bug_010: rag_engine debe abrir transacción y setear iterative_scan."""
+        engine = _fake_engine([[0.1] * 1024])
+        conn = _fake_conn([])
+        await buscar_docs_similares(conn, TENANT, "a", "b", engine=engine)
+        # abrió 1 transacción
+        conn.transaction.assert_called_once()
+        # ejecutó el SET LOCAL antes del fetch
+        conn.execute.assert_awaited_once()
+        set_sql = conn.execute.call_args.args[0]
+        assert "hnsw.iterative_scan" in set_sql
+        assert "relaxed_order" in set_sql
 
     @pytest.mark.asyncio
     async def test_sin_tipo_caso_no_inyecta_filtro(self):
