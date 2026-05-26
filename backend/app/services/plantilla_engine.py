@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import uuid
@@ -5,6 +6,15 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import asyncpg
+
+from app.services.rag_engine import (
+    buscar_docs_similares,
+    formatear_contexto_para_prompt,
+)
+from app.services.ab_test_engine import (
+    persistir_variant,
+    registrar_shadow_para_caso,
+)
 
 logger = logging.getLogger("PLANTILLA_ENGINE")
 
@@ -54,20 +64,63 @@ async def generar_borrador_con_ia(
     cuerpo: str,
     tipo_caso: str,
     nombre_cliente: Optional[str],
+    *,
+    conn: Optional[asyncpg.Connection] = None,
+    tenant_id: Optional[str] = None,
 ) -> Optional[str]:
-    """Genera borrador con Claude Haiku cuando no hay plantilla disponible."""
+    """Genera borrador con Claude Haiku cuando no hay plantilla disponible.
+
+    Si ``conn`` y ``tenant_id`` están presentes Y ``VOYAGE_API_KEY`` configurada,
+    se hace retrieval del KB (Fase 3 RAG) e inyecta los docs relevantes como
+    contexto few-shot en el user prompt. Si el RAG falla, degrada silencioso
+    sin romper el flujo (igual que como funciona hoy sin RAG).
+
+    Devuelve adicionalmente el contexto usado en el atributo ``_rag_docs`` del
+    string (vía dict-wrapper si fuera necesario en versiones futuras; hoy solo
+    se loggean en el caller).
+    """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return None
+
+    # ── RAG retrieval (degrada elegante si falla) ────────────────────────────
+    contexto_rag = ""
+    docs_rag: list[dict] = []
+    if conn is not None and tenant_id and os.environ.get("VOYAGE_API_KEY"):
+        try:
+            docs_rag = await buscar_docs_similares(
+                conn, tenant_id, asunto, cuerpo, tipo_caso=tipo_caso,
+            )
+            if docs_rag:
+                contexto_rag = formatear_contexto_para_prompt(docs_rag)
+        except Exception as exc:  # noqa: BLE001 — RAG nunca debe romper el flow
+            logger.warning("RAG retrieval falló — sigo sin contexto (%s)", exc)
+            docs_rag = []
+
+    # Guardamos los docs usados como atributo del module-level state para que
+    # el caller los pueda loggear en audit_log_respuestas. Es feo pero menos
+    # invasivo que cambiar el contrato de retorno.
+    generar_borrador_con_ia._last_rag_docs = docs_rag  # type: ignore[attr-defined]
+
     try:
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=api_key)
         saludo = f"dirigida a {nombre_cliente}" if nombre_cliente else ""
         system = _PROMPTS_TIPO.get(tipo_caso, _PROMPTS_TIPO["SOLICITUD"])
+
+        # Inyectar el contexto RAG entre el asunto y el cuerpo si existe.
+        bloque_contexto = (
+            f"\n{contexto_rag}\n"
+            "Usa el contexto anterior como guía de tono, normativa precisa y "
+            "estructura. NO copies literal; redacta una respuesta nueva adaptada "
+            "al caso específico.\n\n"
+        ) if contexto_rag else ""
+
         user_msg = (
             f"Redacta la respuesta {saludo} al siguiente caso:\n\n"
             f"Asunto: {asunto}\n\n"
-            f"Contenido del correo:\n{cuerpo[:1500]}\n\n"
+            f"Contenido del correo:\n{cuerpo[:1500]}\n"
+            f"{bloque_contexto}"
             "La respuesta debe tener: saludo formal, reconocimiento del caso, "
             "fundamento legal aplicable, plazo de respuesta definitiva y despedida. "
             "Máximo 300 palabras."
@@ -201,6 +254,7 @@ async def generar_borrador_para_caso(
         slug_generico = f"GENERICO_{tipo_caso.upper()}"
         plantilla = await obtener_plantilla(conn, tenant_id, slug_generico)
 
+    rag_docs_usados: list[dict] = []
     if plantilla:
         borrador = personalizar_borrador(
             plantilla["cuerpo"], nombre_cliente, cedula,
@@ -210,10 +264,37 @@ async def generar_borrador_para_caso(
         estado   = "PENDIENTE"
         pid      = plantilla["id"]
     else:
-        # Fallback: Claude genera un borrador legal genérico
-        borrador = await generar_borrador_con_ia(asunto, cuerpo, tipo_caso or "SOLICITUD", nombre_cliente) if tipo_caso else None
+        # Fallback: Claude genera un borrador legal genérico, ahora con RAG.
+        borrador = await generar_borrador_con_ia(
+            asunto, cuerpo, tipo_caso or "SOLICITUD", nombre_cliente,
+            conn=conn, tenant_id=tenant_id,
+        ) if tipo_caso else None
         estado   = "PENDIENTE" if borrador else "SIN_PLANTILLA"
         pid      = None
+        rag_docs_usados = getattr(generar_borrador_con_ia, "_last_rag_docs", []) or []
+
+        # ── Fase 4 A/B shadow mode ────────────────────────────────────────
+        # Persistimos la variant oficial (with_rag) + lanzamos shadow no_rag
+        # para comparación posterior. Ambas son fire-and-degrade: si
+        # cualquiera falla, log warn y el flow sigue normal.
+        if borrador and tipo_caso:
+            await persistir_variant(
+                conn, caso_id, tenant_id, "with_rag", borrador,
+                rag_docs=[
+                    {"source_type": d["source_type"],
+                     "source_id":   d["source_id"],
+                     "sim_score":   round(float(d["sim_score"]), 4)}
+                    for d in rag_docs_usados
+                ],
+                tipo_caso=tipo_caso,
+                modelo="claude-haiku-4-5-20251001",
+            )
+            # Shadow inline (~3-5s extra). NO usamos create_task para evitar
+            # leaks de tasks no-awaited en el worker batch.
+            await registrar_shadow_para_caso(
+                conn, caso_id, tenant_id, asunto, cuerpo,
+                tipo_caso, nombre_cliente,
+            )
 
     await conn.execute(
         """UPDATE pqrs_casos
@@ -225,12 +306,30 @@ async def generar_borrador_para_caso(
         borrador, estado, problematica, pid, uuid.UUID(caso_id),
     )
 
+    metadata = {
+        "problematica": problematica,
+        "tiene_plantilla": plantilla is not None,
+        "rag_docs": [
+            {"source_type": d["source_type"],
+             "source_id":   d["source_id"],
+             "sim_score":   round(float(d["sim_score"]), 4)}
+            for d in rag_docs_usados
+        ],
+    }
     await conn.execute(
         """INSERT INTO audit_log_respuestas (caso_id, accion, metadata)
            VALUES ($1, 'BORRADOR_GENERADO', $2)""",
         uuid.UUID(caso_id),
-        f'{{"problematica":"{problematica}","tiene_plantilla":{str(plantilla is not None).lower()}}}',
+        json.dumps(metadata),
     )
 
-    logger.info(f"Borrador [{estado}] para caso {caso_id} | problematica={problematica}")
-    return {"borrador_respuesta": borrador, "borrador_estado": estado, "problematica_detectada": problematica}
+    logger.info(
+        f"Borrador [{estado}] para caso {caso_id} | "
+        f"problematica={problematica} | rag_docs={len(rag_docs_usados)}"
+    )
+    return {
+        "borrador_respuesta":     borrador,
+        "borrador_estado":        estado,
+        "problematica_detectada": problematica,
+        "rag_docs_usados":        len(rag_docs_usados),
+    }

@@ -2,7 +2,10 @@ version: "3.8"
 
 services:
   postgres_v2:
-    image: postgres:15-alpine
+    # pgvector/pgvector:pg15 = postgres:15 oficial + extensión pgvector pre-compilada.
+    # Drop-in compatible con el data del volumen anterior (mismo PG 15).
+    # Cambiado 2026-05-26 para la Fase 1 del RAG real (migración 16_kb_rag_pgvector.sql).
+    image: pgvector/pgvector:pg15
     container_name: pqrs_v2_db
     environment:
       POSTGRES_USER: pqrs_admin
@@ -87,6 +90,7 @@ services:
       - MINIO_SECRET_KEY=adminpassword
       - MINIO_PUBLIC_URL=http://54.233.39.211:9020
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
       - ACCESS_TOKEN_EXPIRE_MINUTES=480
     ports:
       - "8001:8000"
@@ -110,6 +114,7 @@ services:
       - MINIO_SECRET_KEY=adminpassword
       - MINIO_PUBLIC_URL=http://54.233.39.211:9020
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
       - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
@@ -137,6 +142,7 @@ services:
       - DATABASE_URL=postgresql://pqrs_admin:pg_password@postgres_v2:5432/pqrs_v2
       - REDIS_URL=redis://:NuSvuOWiQtGWkZleg-zwqUZzs6DewuaK@redis_v2:6379
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
       - DEMO_GMAIL_USER=democlasificador@gmail.com
       - DEMO_GMAIL_PASSWORD=${DEMO_GMAIL_PASSWORD:-}
       - DEMO_RESET_MINUTES=30
