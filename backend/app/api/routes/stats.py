@@ -191,8 +191,40 @@ async def get_rendimiento(
     intervalos = {"dia": 1, "semana": 7, "mes": 30}
     dias = intervalos.get(periodo, 7)
 
+    # Subqueries de eficiencia (idénticas en ambas ramas). Calculadas por usuario.
+    # NOTA: usan ventana del período ($1 = dias) para borradores; PQRs gestionados
+    # y escalamiento se miden sobre la historia completa del abogado.
+    efic_subq = """
+      (SELECT COUNT(*) FROM audit_log_respuestas a
+        WHERE a.usuario_id = u.id AND a.accion='BORRADOR_GENERADO'
+          AND a.created_at >= NOW() - make_interval(days => $1)) AS borradores_generados,
+      (SELECT COUNT(*) FROM audit_log_respuestas a
+        WHERE a.usuario_id = u.id AND a.accion='BORRADOR_EDITADO'
+          AND a.created_at >= NOW() - make_interval(days => $1)) AS borradores_editados,
+      (SELECT COUNT(*) FROM audit_log_respuestas a
+        WHERE a.usuario_id = u.id AND a.accion='ENVIADO_LOTE'
+          AND a.created_at >= NOW() - make_interval(days => $1)) AS borradores_enviados,
+      (SELECT ROUND(AVG(similarity_score)::numeric, 3) FROM borrador_feedback bf
+        WHERE bf.usuario_id = u.id
+          AND bf.created_at >= NOW() - make_interval(days => $1)) AS similarity_avg,
+      (SELECT ROUND(AVG(EXTRACT(EPOCH FROM (e.created_at - g.created_at))/60)::numeric, 1)
+         FROM audit_log_respuestas g
+         JOIN audit_log_respuestas e ON e.caso_id = g.caso_id AND e.accion='ENVIADO_LOTE'
+        WHERE g.accion='BORRADOR_GENERADO' AND g.usuario_id = u.id
+          AND g.created_at >= NOW() - make_interval(days => $1)) AS review_time_avg_min,
+      -- PQRs gestionados (respondidos) por este abogado (toda la historia)
+      (SELECT COUNT(*) FROM pqrs_casos pq
+        WHERE pq.asignado_a = u.id AND pq.tipo_caso != 'TUTELA'
+          AND pq.estado IN ('CERRADO','CONTESTADO')) AS pqrs_gestionados,
+      -- De esos PQRs, cuántos figuran como origen de alguna tutela posterior
+      (SELECT COUNT(DISTINCT pq.id) FROM pqrs_casos pq
+         JOIN pqrs_casos t ON pq.id = ANY(t.pqr_origenes)
+        WHERE pq.asignado_a = u.id AND pq.tipo_caso != 'TUTELA'
+          AND t.tipo_caso = 'TUTELA') AS pqrs_escalaron
+    """
+
     if target_tenant is None:
-        rows = await conn.fetch("""
+        rows = await conn.fetch(f"""
             SELECT
                 u.id, u.nombre, u.email,
                 t.nombre AS cliente_nombre,
@@ -202,7 +234,8 @@ async def get_rendimiento(
                 COUNT(c.id) FILTER (WHERE c.estado = 'CERRADO' AND c.fecha_asignacion >= NOW() - make_interval(days => $1)) AS cerrados_periodo,
                 COUNT(c.id) FILTER (WHERE c.fecha_vencimiento < NOW() AND c.estado != 'CERRADO') AS vencidos,
                 COUNT(c.id) FILTER (WHERE c.nivel_prioridad IN ('ALTA','CRITICA')) AS criticos,
-                ROUND(AVG(EXTRACT(EPOCH FROM (c.updated_at - c.fecha_asignacion)) / 3600)::numeric, 1) AS avg_horas_resolucion
+                ROUND(AVG(EXTRACT(EPOCH FROM (c.updated_at - c.fecha_asignacion)) / 3600)::numeric, 1) AS avg_horas_resolucion,
+                {efic_subq}
             FROM usuarios u
             LEFT JOIN pqrs_casos c ON c.asignado_a = u.id
             LEFT JOIN clientes_tenant t ON t.id = u.cliente_id
@@ -211,7 +244,7 @@ async def get_rendimiento(
             ORDER BY asignados_total DESC
         """, dias)
     else:
-        rows = await conn.fetch("""
+        rows = await conn.fetch(f"""
             SELECT
                 u.id, u.nombre, u.email,
                 NULL::text AS cliente_nombre,
@@ -221,7 +254,8 @@ async def get_rendimiento(
                 COUNT(c.id) FILTER (WHERE c.estado = 'CERRADO' AND c.fecha_asignacion >= NOW() - make_interval(days => $1)) AS cerrados_periodo,
                 COUNT(c.id) FILTER (WHERE c.fecha_vencimiento < NOW() AND c.estado != 'CERRADO') AS vencidos,
                 COUNT(c.id) FILTER (WHERE c.nivel_prioridad IN ('ALTA','CRITICA')) AS criticos,
-                ROUND(AVG(EXTRACT(EPOCH FROM (c.updated_at - c.fecha_asignacion)) / 3600)::numeric, 1) AS avg_horas_resolucion
+                ROUND(AVG(EXTRACT(EPOCH FROM (c.updated_at - c.fecha_asignacion)) / 3600)::numeric, 1) AS avg_horas_resolucion,
+                {efic_subq}
             FROM usuarios u
             LEFT JOIN pqrs_casos c ON c.asignado_a = u.id
             WHERE u.cliente_id = $2::uuid AND u.rol IN ('analista', 'abogado')
@@ -229,8 +263,13 @@ async def get_rendimiento(
             ORDER BY asignados_total DESC
         """, dias, target_tenant)
 
-    abogados = [
-        {
+    abogados = []
+    for r in rows:
+        bg = r["borradores_generados"] or 0
+        be = r["borradores_editados"] or 0
+        pq_gest = r["pqrs_gestionados"] or 0
+        pq_esc = r["pqrs_escalaron"] or 0
+        abogados.append({
             "id": str(r["id"]),
             "nombre": r["nombre"],
             "email": r["email"],
@@ -242,10 +281,19 @@ async def get_rendimiento(
             "vencidos": r["vencidos"] or 0,
             "criticos": r["criticos"] or 0,
             "tasa_resolucion": round((r["cerrados_total"] / r["asignados_total"] * 100), 1) if r["asignados_total"] else 0,
-            "avg_horas_resolucion": float(r["avg_horas_resolucion"]) if r["avg_horas_resolucion"] else None
-        }
-        for r in rows
-    ]
+            "avg_horas_resolucion": float(r["avg_horas_resolucion"]) if r["avg_horas_resolucion"] else None,
+            # === Eficiencia (Fase 1+2) ===
+            "borradores_generados": bg,
+            "borradores_editados": be,
+            "borradores_enviados": r["borradores_enviados"] or 0,
+            "ratio_edicion": round(be / bg * 100, 1) if bg else 0,
+            "similarity_avg": float(r["similarity_avg"]) if r["similarity_avg"] is not None else None,
+            "review_time_avg_min": float(r["review_time_avg_min"]) if r["review_time_avg_min"] is not None else None,
+            "pqrs_gestionados": pq_gest,
+            "pqrs_escalaron_a_tutela": pq_esc,
+            "tutelas_evitadas": max(pq_gest - pq_esc, 0),
+            "tasa_prevencion": round((pq_gest - pq_esc) / pq_gest * 100, 1) if pq_gest else 0,
+        })
 
     return {"periodo": periodo, "abogados": abogados}
 

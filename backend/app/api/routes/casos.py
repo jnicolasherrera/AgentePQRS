@@ -433,9 +433,10 @@ async def editar_borrador(
         try:
             await conn.execute(
                 """INSERT INTO borrador_feedback
-                   (caso_id, cliente_id, tipo_caso, original_ai, editado_usuario, similarity_score)
-                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                   (caso_id, cliente_id, tipo_caso, usuario_id, original_ai, editado_usuario, similarity_score)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
                 caso["id"], caso["cliente_id"], caso["tipo_caso"],
+                uuid.UUID(current_user.usuario_id),
                 original_ai[:2000], body.texto[:2000], similarity,
             )
         except Exception as e:
