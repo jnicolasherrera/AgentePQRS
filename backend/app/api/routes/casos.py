@@ -260,7 +260,7 @@ async def get_caso_detalle(
         """SELECT c.id, c.cliente_id, c.email_origen, c.asunto, c.cuerpo, c.estado, c.nivel_prioridad,
                   c.fecha_recibido, c.tipo_caso, c.fecha_vencimiento,
                   c.borrador_respuesta, c.borrador_estado, c.problematica_detectada,
-                  c.asignado_a, u.nombre AS asignado_nombre
+                  c.asignado_a, u.nombre AS asignado_nombre, c.pqr_origenes
            FROM pqrs_casos c
            LEFT JOIN usuarios u ON u.id = c.asignado_a
            WHERE c.id = $1 AND ($2 OR c.cliente_id = $3)""",
@@ -270,6 +270,29 @@ async def get_caso_detalle(
     )
     if not caso:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
+
+    # PQRs vinculados (origenes): solo para tipo TUTELA, hidratamos detalles.
+    pqr_origenes_data = []
+    origenes = caso["pqr_origenes"] or []
+    if caso["tipo_caso"] == "TUTELA" and origenes:
+        rows_orig = await conn.fetch(
+            """SELECT id, numero_radicado, asunto, tipo_caso, estado, fecha_recibido, email_origen
+               FROM pqrs_casos
+               WHERE id = ANY($1::uuid[]) AND cliente_id = $2""",
+            origenes, caso["cliente_id"],
+        )
+        pqr_origenes_data = [
+            {
+                "id": str(r["id"]),
+                "numero_radicado": r["numero_radicado"],
+                "asunto": r["asunto"],
+                "tipo_caso": r["tipo_caso"],
+                "estado": r["estado"],
+                "fecha_recibido": r["fecha_recibido"].isoformat() if r["fecha_recibido"] else None,
+                "email_origen": r["email_origen"],
+            }
+            for r in rows_orig
+        ]
     comentarios_rows = await conn.fetch(
         """SELECT id, comentario, tipo_evento, created_at
            FROM pqrs_comentarios WHERE caso_id = $1 ORDER BY created_at ASC""",
@@ -306,6 +329,7 @@ async def get_caso_detalle(
         "problematica_detectada": caso["problematica_detectada"],
         "asignado_a": str(caso["asignado_a"]) if caso["asignado_a"] else None,
         "asignado_nombre": caso["asignado_nombre"],
+        "pqr_origenes": pqr_origenes_data,
         "comentarios": comentarios,
         "archivos": [
             {
@@ -614,3 +638,130 @@ async def aprobar_lote(
             errores.append({"caso_id": cid, "motivo": str(e)})
 
     return {"enviados": len(enviados), "lote_id": str(lote_id), "errores": errores}
+
+
+# ============================================================
+# Estrategia D — Vinculación manual TUTELA ↔ PQR previo
+# ============================================================
+
+class VincularPQRBody(BaseModel):
+    pqr_id: str
+
+
+@router.get("/{tutela_id}/pqrs-vinculables")
+async def listar_pqrs_vinculables(
+    tutela_id: str,
+    q: Optional[str] = Query(None, max_length=100),
+    current_user: UserInToken = Depends(get_current_user),
+    conn=Depends(get_db_connection),
+) -> Dict[str, Any]:
+    """Lista PQRs candidatos a vincular a una tutela (mismo cliente, no-TUTELA, no ya vinculados).
+    Filtra por asunto/email/radicado si q presente. Limit 20."""
+    tutela = await conn.fetchrow(
+        """SELECT cliente_id, email_origen, pqr_origenes, tipo_caso
+           FROM pqrs_casos WHERE id = $1 AND ($2 OR cliente_id = $3)""",
+        uuid.UUID(tutela_id),
+        current_user.role == "super_admin",
+        uuid.UUID(current_user.tenant_uuid),
+    )
+    if not tutela:
+        raise HTTPException(status_code=404, detail="Tutela no encontrada")
+    if tutela["tipo_caso"] != "TUTELA":
+        raise HTTPException(status_code=400, detail="Solo se pueden vincular PQRs a casos tipo TUTELA")
+
+    yas = tutela["pqr_origenes"] or []
+    params: List[Any] = [tutela["cliente_id"], yas]
+    where_extra = ""
+    if q:
+        params.append(f"%{q}%")
+        where_extra = (
+            f" AND (asunto ILIKE ${len(params)} OR email_origen ILIKE ${len(params)} "
+            f"OR numero_radicado ILIKE ${len(params)})"
+        )
+    rows = await conn.fetch(
+        f"""SELECT id, numero_radicado, asunto, tipo_caso, estado, email_origen, fecha_recibido
+            FROM pqrs_casos
+            WHERE cliente_id = $1 AND tipo_caso != 'TUTELA' AND id != ALL($2::uuid[])
+            {where_extra}
+            ORDER BY fecha_recibido DESC LIMIT 20""",
+        *params,
+    )
+    return {
+        "items": [
+            {
+                "id": str(r["id"]),
+                "numero_radicado": r["numero_radicado"],
+                "asunto": r["asunto"],
+                "tipo_caso": r["tipo_caso"],
+                "estado": r["estado"],
+                "email_origen": r["email_origen"],
+                "fecha_recibido": r["fecha_recibido"].isoformat() if r["fecha_recibido"] else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.post("/{tutela_id}/vincular-pqr")
+async def vincular_pqr(
+    tutela_id: str,
+    body: VincularPQRBody,
+    current_user: UserInToken = Depends(get_current_user),
+    conn=Depends(get_db_connection),
+) -> Dict[str, Any]:
+    """Agrega un PQR al array pqr_origenes de la tutela (estrategia D — manual)."""
+    pqr_uuid = uuid.UUID(body.pqr_id)
+    tutela_uuid = uuid.UUID(tutela_id)
+    # Validar ambos del mismo cliente y tipos correctos (RLS scoping via cliente_id)
+    pair = await conn.fetchrow(
+        """SELECT
+             (SELECT cliente_id FROM pqrs_casos WHERE id = $1) AS t_cli,
+             (SELECT tipo_caso  FROM pqrs_casos WHERE id = $1) AS t_tipo,
+             (SELECT cliente_id FROM pqrs_casos WHERE id = $2) AS p_cli,
+             (SELECT tipo_caso  FROM pqrs_casos WHERE id = $2) AS p_tipo""",
+        tutela_uuid, pqr_uuid,
+    )
+    if not pair or not pair["t_cli"]:
+        raise HTTPException(status_code=404, detail="Tutela no encontrada")
+    if pair["t_tipo"] != "TUTELA":
+        raise HTTPException(status_code=400, detail="El caso destino no es una TUTELA")
+    if not pair["p_cli"]:
+        raise HTTPException(status_code=404, detail="PQR no encontrado")
+    if pair["p_tipo"] == "TUTELA":
+        raise HTTPException(status_code=400, detail="No se puede vincular otra TUTELA como origen")
+    if pair["t_cli"] != pair["p_cli"]:
+        raise HTTPException(status_code=400, detail="Tutela y PQR deben pertenecer al mismo cliente")
+    is_super = current_user.role == "super_admin"
+    if not is_super and pair["t_cli"] != uuid.UUID(current_user.tenant_uuid):
+        raise HTTPException(status_code=404, detail="Tutela no encontrada")
+
+    # Append idempotente (array_append no duplica? PG sí duplica; usamos NOT contains)
+    await conn.execute(
+        """UPDATE pqrs_casos
+           SET pqr_origenes = array_append(pqr_origenes, $1)
+           WHERE id = $2 AND NOT ($1 = ANY(pqr_origenes))""",
+        pqr_uuid, tutela_uuid,
+    )
+    return {"ok": True, "pqr_id": str(pqr_uuid), "tutela_id": str(tutela_uuid)}
+
+
+@router.delete("/{tutela_id}/vincular-pqr/{pqr_id}")
+async def desvincular_pqr(
+    tutela_id: str,
+    pqr_id: str,
+    current_user: UserInToken = Depends(get_current_user),
+    conn=Depends(get_db_connection),
+) -> Dict[str, Any]:
+    """Quita un PQR del array pqr_origenes de la tutela (estrategia D — manual)."""
+    is_super = current_user.role == "super_admin"
+    updated = await conn.fetchval(
+        """UPDATE pqrs_casos
+           SET pqr_origenes = array_remove(pqr_origenes, $1)
+           WHERE id = $2 AND ($3 OR cliente_id = $4)
+           RETURNING id""",
+        uuid.UUID(pqr_id), uuid.UUID(tutela_id),
+        is_super, uuid.UUID(current_user.tenant_uuid),
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Tutela no encontrada")
+    return {"ok": True}

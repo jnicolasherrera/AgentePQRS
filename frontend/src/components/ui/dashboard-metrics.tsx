@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, ReactNode } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle, Clock, Inbox, ArrowRight, Scale,
@@ -9,58 +9,13 @@ import {
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { useAuthStore, api } from "@/store/authStore";
+import { useAuthStore } from "@/store/authStore";
 import { useDashboardStats } from "@/hooks/useDashboardStats";
-
-const nf = (n: number) => (n ?? 0).toLocaleString("es-CO");
-const fmtFecha = (f: string) => {
-  const d = new Date(f + "T00:00:00");
-  return d.toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
-};
-
-interface TendenciaPoint { fecha: string; recibidos: number; cerrados: number; tutelas?: number; }
-
-type Periodo = "dia" | "semana" | "mes";
-const PERIODOS: { key: Periodo; label: string }[] = [
-  { key: "dia", label: "Hoy" },
-  { key: "semana", label: "7 días" },
-  { key: "mes", label: "30 días" },
-];
-
-/* ---------- piezas de UI reutilizables ---------- */
-
-function SectionLabel({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
-  return (
-    <h4 className="text-[11px] font-bold text-muted-foreground uppercase tracking-[0.15em] agente items-center gap-2 mb-4">
-      {icon}{children}
-    </h4>
-  );
-}
-
-function KpiCard({
-  label, value, sub, accent = "primary", icon, alert = false,
-}: {
-  label: string; value: ReactNode; sub?: ReactNode;
-  accent?: "primary" | "red" | "orange" | "green" | "slate"; icon?: ReactNode; alert?: boolean;
-}) {
-  const accents: Record<string, string> = {
-    primary: "text-primary bg-primary/10",
-    red: "text-red-600 bg-red-500/10",
-    orange: "text-orange-600 bg-orange-500/10",
-    green: "text-green-600 bg-green-500/10",
-    slate: "text-muted-foreground bg-muted",
-  };
-  return (
-    <div className={`glass-kpi rounded-2xl p-5 agente items-start justify-between gap-3 ${alert ? "ring-1 ring-red-500/30" : ""}`}>
-      <div className="min-w-0">
-        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider truncate">{label}</p>
-        <h3 className="text-3xl font-black text-foreground tracking-tight mt-2 tabular-nums">{value}</h3>
-        {sub && <p className="text-xs text-muted-foreground mt-1.5">{sub}</p>}
-      </div>
-      {icon && <div className={`p-2.5 rounded-xl shrink-0 ${accents[accent]}`}>{icon}</div>}
-    </div>
-  );
-}
+import { useTendencia } from "@/hooks/useTendencia";
+import { KpiCard } from "@/components/ui/kpi-card";
+import { SectionLabel } from "@/components/ui/section-label";
+import { formatNumber as nf, formatDateShort as fmtFecha } from "@/lib/format";
+import { PERIODOS, TIPO_COLOR_HEX, type Periodo } from "@/lib/casos-constants";
 
 export function DashboardMetrics({
   selectedClienteId = "", onVerTodos,
@@ -68,20 +23,8 @@ export function DashboardMetrics({
   const { user } = useAuthStore();
   const { stats, loading } = useDashboardStats(selectedClienteId);
   const [periodo, setPeriodo] = useState<Periodo>("semana");
-  const [tendencia, setTendencia] = useState<TendenciaPoint[]>([]);
-
   const isAdmin = user?.rol === "admin" || user?.rol === "super_admin";
-
-  useEffect(() => {
-    if (!isAdmin) return;
-    const base = `/stats/rendimiento/tendencia?periodo=${periodo}`;
-    const url = selectedClienteId ? `${base}&cliente_id=${selectedClienteId}` : base;
-    const ctrl = new AbortController();
-    api.get<TendenciaPoint[]>(url, { signal: ctrl.signal })
-      .then(r => setTendencia(r.data || []))
-      .catch((e) => { if (e?.name !== "CanceledError" && e?.code !== "ERR_CANCELED") setTendencia([]); });
-    return () => ctrl.abort();
-  }, [isAdmin, periodo, selectedClienteId]);
+  const { data: tendencia } = useTendencia(periodo, selectedClienteId, isAdmin);
 
   if (loading && !stats) {
     return (
@@ -112,10 +55,6 @@ export function DashboardMetrics({
   const tutelasPeriodo = tendencia.reduce((a, p) => a + (p.tutelas || 0), 0);
   const tutelasPeriodoPct = recibidosPeriodo > 0 ? Math.round((tutelasPeriodo / recibidosPeriodo) * 100) : 0;
 
-  const tipoColor: Record<string, string> = {
-    TUTELA: "#dc2626", PETICION: "#035aa7", QUEJA: "#f59e0b",
-    RECLAMO: "#8b5cf6", SOLICITUD: "#06b6d4", CONSULTA: "#64748b",
-  };
   const tiposOrdenados = Object.entries(tipos).sort((a, b) => b[1] - a[1]);
 
   const ingresos = stats.ingresos_semana;
@@ -340,7 +279,7 @@ export function DashboardMetrics({
           <div className="space-y-3 agente-1">
             {tiposOrdenados.map(([tipo, count]) => {
               const pct = Math.round(((count as number) / totalTipos) * 100);
-              const color = tipoColor[tipo] || "#64748b";
+              const color = TIPO_COLOR_HEX[tipo] || "#64748b";
               return (
                 <div key={tipo}>
                   <div className="agente items-center justify-between mb-1">
