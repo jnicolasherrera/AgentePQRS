@@ -39,7 +39,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3002", "http://localhost:3003", "http://54.233.39.211:3002", "https://app.flexpqr.com", "https://flexpqr.com"],
+    allow_origins=["http://localhost:3000", "http://localhost:3002", "http://localhost:3003", "http://localhost:3010", "http://54.233.39.211:3002", "https://app.flexpqr.com", "https://flexpqr.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

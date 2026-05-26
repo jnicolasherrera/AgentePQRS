@@ -36,18 +36,41 @@ async def get_dashboard_stats(
         filtros.append(f"asignado_a = ${len(params)}::uuid")
     w = "WHERE " + " AND ".join(filtros)
 
-    total_casos    = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w}", *params)
-    total_criticos = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND nivel_prioridad IN ('ALTA', 'CRITICA')", *params)
-    abiertos       = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND estado = 'ABIERTO'", *params)
-    en_proceso     = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND estado = 'EN_PROCESO'", *params)
-    contestados    = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND estado = 'CONTESTADO'", *params)
-    cerrados       = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND estado = 'CERRADO'", *params)
-    casos_hoy      = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND fecha_recibido >= CURRENT_DATE", *params)
-    casos_semana   = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND fecha_recibido >= CURRENT_DATE - INTERVAL '7 days'", *params)
-    vencidos       = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND fecha_vencimiento < NOW() AND estado != 'CERRADO'", *params)
-    asignados      = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND asignado_a IS NOT NULL", *params)
-    con_acuse      = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND acuse_enviado = TRUE", *params)
-    respondidos    = await conn.fetchval(f"SELECT COUNT(*) FROM pqrs_casos {w} AND estado IN ('CONTESTADO', 'CERRADO')", *params)
+    # KPIs en una sola query con COUNT(*) FILTER (1 RTT vs 14)
+    kpi = await conn.fetchrow(f"""
+        SELECT
+          COUNT(*) AS total_casos,
+          COUNT(*) FILTER (WHERE nivel_prioridad IN ('ALTA','CRITICA')) AS total_criticos,
+          COUNT(*) FILTER (WHERE estado='ABIERTO')                       AS abiertos,
+          COUNT(*) FILTER (WHERE estado='EN_PROCESO')                    AS en_proceso,
+          COUNT(*) FILTER (WHERE estado='CONTESTADO')                    AS contestados,
+          COUNT(*) FILTER (WHERE estado='CERRADO')                       AS cerrados,
+          COUNT(*) FILTER (WHERE estado IN ('ABIERTO','EN_PROCESO'))     AS activos,
+          COUNT(*) FILTER (WHERE fecha_recibido >= CURRENT_DATE)         AS casos_hoy,
+          COUNT(*) FILTER (WHERE fecha_recibido >= CURRENT_DATE - INTERVAL '7 days') AS casos_semana,
+          COUNT(*) FILTER (WHERE fecha_vencimiento < NOW() AND estado != 'CERRADO') AS vencidos,
+          COUNT(*) FILTER (WHERE fecha_vencimiento >= NOW()
+                            AND fecha_vencimiento <= NOW() + INTERVAL '48 hours'
+                            AND estado != 'CERRADO')                     AS por_vencer,
+          COUNT(*) FILTER (WHERE asignado_a IS NOT NULL)                 AS asignados,
+          COUNT(*) FILTER (WHERE acuse_enviado = TRUE)                   AS con_acuse,
+          COUNT(*) FILTER (WHERE estado IN ('CONTESTADO','CERRADO'))     AS respondidos
+        FROM pqrs_casos {w}
+    """, *params)
+    total_casos    = kpi['total_casos']
+    total_criticos = kpi['total_criticos']
+    abiertos       = kpi['abiertos']
+    en_proceso     = kpi['en_proceso']
+    contestados    = kpi['contestados']
+    cerrados       = kpi['cerrados']
+    activos        = kpi['activos']
+    casos_hoy      = kpi['casos_hoy']
+    casos_semana   = kpi['casos_semana']
+    vencidos       = kpi['vencidos']
+    por_vencer     = kpi['por_vencer']
+    asignados      = kpi['asignados']
+    con_acuse      = kpi['con_acuse']
+    respondidos    = kpi['respondidos']
 
     estados_records = await conn.fetch(f"SELECT estado, COUNT(*) as count FROM pqrs_casos {w} GROUP BY estado", *params)
     distribucion_estados = {r['estado']: r['count'] for r in estados_records}
@@ -62,7 +85,7 @@ async def get_dashboard_stats(
         FROM pqrs_casos c
         LEFT JOIN clientes_tenant t ON t.id = c.cliente_id
         {w}
-        ORDER BY c.fecha_recibido DESC LIMIT 50
+        ORDER BY c.fecha_recibido DESC LIMIT 10
     """, *params)
     ultimos_casos = [
         {
@@ -93,7 +116,9 @@ async def get_dashboard_stats(
             "cerrados": cerrados,
             "casos_hoy": casos_hoy,
             "casos_semana": casos_semana,
-            "vencidos": vencidos
+            "vencidos": vencidos,
+            "por_vencer": por_vencer,
+            "activos": activos
         },
         "trazabilidad": {
             "recibidos":   total_casos,
@@ -240,6 +265,11 @@ async def rendimiento_tendencia(
             FROM pqrs_casos WHERE enviado_at IS NOT NULL AND enviado_at >= NOW() - make_interval(days => $1)
             GROUP BY d ORDER BY d
         """, dias)
+        tut = await conn.fetch("""
+            SELECT DATE(fecha_recibido AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
+            FROM pqrs_casos WHERE tipo_caso = 'TUTELA' AND fecha_recibido >= NOW() - make_interval(days => $1)
+            GROUP BY d ORDER BY d
+        """, dias)
     else:
         tid = uuid.UUID(cliente_id) if (es_super and cliente_id) else uuid.UUID(current_user.tenant_uuid)
         rec = await conn.fetch("""
@@ -252,11 +282,17 @@ async def rendimiento_tendencia(
             FROM pqrs_casos WHERE cliente_id = $1 AND enviado_at IS NOT NULL AND enviado_at >= NOW() - make_interval(days => $2)
             GROUP BY d ORDER BY d
         """, tid, dias)
+        tut = await conn.fetch("""
+            SELECT DATE(fecha_recibido AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
+            FROM pqrs_casos WHERE cliente_id = $1 AND tipo_caso = 'TUTELA' AND fecha_recibido >= NOW() - make_interval(days => $2)
+            GROUP BY d ORDER BY d
+        """, tid, dias)
 
     recibidos = {str(r["d"]): r["n"] for r in rec}
     cerrados  = {str(r["d"]): r["n"] for r in cer}
-    all_dates = sorted(set(recibidos) | set(cerrados))
-    return [{"fecha": d, "recibidos": recibidos.get(d, 0), "cerrados": cerrados.get(d, 0)} for d in all_dates]
+    tutelas   = {str(r["d"]): r["n"] for r in tut}
+    all_dates = sorted(set(recibidos) | set(cerrados) | set(tutelas))
+    return [{"fecha": d, "recibidos": recibidos.get(d, 0), "cerrados": cerrados.get(d, 0), "tutelas": tutelas.get(d, 0)} for d in all_dates]
 
 
 @router.get("/rendimiento/{abogado_id}/actividad")
