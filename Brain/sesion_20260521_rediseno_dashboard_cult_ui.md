@@ -176,6 +176,32 @@ Layout Operacional con recharts (ya en deps):
 - Se quitó la sección "Métricas de Respuestas" (vive en tab Rendimiento).
 - Compila limpio. Screenshots: `09_dashboard_v2.png`, `10_dashboard_v2_top.png`.
 
+## Liquid Glass + Metallic surface — HECHO 2026-05-26
+Dos utilidades nuevas en `globals.css`:
+- `.liquid-glass-nav` (sidebar): gradiente navy translúcido + `backdrop-filter: blur(32px) saturate(1.8)` + highlights internos (top + right specular) vía ::before/::after.
+- `.metallic-surface` (root del shell): brushed steel cool-gray con 4 capas (radial
+  highlight arriba-izq, radial shadow abajo-der, repeating-linear brushing, base
+  metálica) + noise SVG turbulence vía ::before (mix-blend overlay).
+- `.liquid-aurora` (1/2/3): orbs posicionados detrás del sidebar (en root); el
+  liquid glass los refracta dando color al interior del vidrio.
+- En `page.tsx`: root usa `metallic-surface relative`, sidebar `liquid-glass-nav text-white`,
+  3 spans aurora antes del aside. Se quitó el glow blob central y el overlay interno
+  del sidebar (los reemplaza el efecto).
+- Screenshot: `_rediseno_shots/12_liquid_glass.png` y `13_liquid_glass_detail.png`.
+
+## Cards como botones LIQUID GLASS — HECHO 2026-05-26
+- `glass-panel` y `glass-kpi` (globals.css) redefinidos a vidrio traslúcido:
+  rgba blanco + `backdrop-filter: blur(20-22px) saturate(1.5-1.6)` + highlights
+  internos (inset top blanco, bottom navy sutil) + sombras suaves.
+- `glass-kpi` con hover lift (translateY -2px + más brillo) → sensación de botón.
+- Conversiones a glass en componentes:
+  - `dashboard-metrics`: cards del funnel trazabilidad (bg-card → glass-kpi).
+  - `admin-bandeja`: wrapper principal de tabla (bg-muted → glass-panel).
+  - `enviados-tab`: idem.
+- Screenshots de las 5 pestañas: `14_dashboard_glass`, `15_bandeja_glass`,
+  `16_enviados_glass`, `17_rendimiento_glass`, `18_configuracion_glass`,
+  `19_dashboard_glass_detail` (detalle).
+
 ## Pendiente / próximos pasos
 - **Redeploy backend** para que `por_vencer`/`activos`/`tutelas` lleguen de verdad
   (rebuild imagen o `docker compose restart backend_v2` con código montado).
