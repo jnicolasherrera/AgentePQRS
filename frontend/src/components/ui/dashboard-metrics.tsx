@@ -100,10 +100,10 @@ export function DashboardMetrics({
   }
   if (!stats) return null;
 
-  const k = stats.kpis as Record<string, number>;
+  const k = stats.kpis as unknown as Record<string, number>;
   const activos = k.activos ?? ((k.abiertos || 0) + (k.en_proceso || 0));
   const total = k.total_casos || 0;
-  const tipos = (stats.distribucion_tipo || {}) as Record<string, number>;
+  const tipos = (stats.distribucion_tipo || {}) as unknown as Record<string, number>;
   const totalTipos = Object.values(tipos).reduce((a, b) => a + (b as number), 0) || 1;
   const tutelas = tipos["TUTELA"] || 0;
   const tutelasPct = Math.round((tutelas / (total || 1)) * 100);
