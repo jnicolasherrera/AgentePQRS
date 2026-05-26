@@ -32,16 +32,18 @@ async def login(request: Request, form_data: TokenRequest, conn = Depends(get_db
     3. Retorna un JWT con el Token Claims (Roles y Tenant RLS)
     """
     # 1. Buscar Usuario (Case Insensitive) + Nombre de Cliente
-    # Bypass RLS solo durante el SELECT de login (anonymous, sin tenant context aún).
-    # SET LOCAL vive solo dentro de la transacción → no fuga al resto del request.
-    # La policy tenant_isolation_usuarios_policy ya soporta el bypass vía app.is_superuser.
     query = """
     SELECT u.id, u.cliente_id, u.nombre, u.password_hash, u.rol, u.debe_cambiar_password, c.nombre as cliente_nombre
     FROM usuarios u
     JOIN clientes_tenant c ON u.cliente_id = c.id
     WHERE LOWER(u.email) = LOWER($1)
     """
+    # Bypass RLS solo durante el SELECT de login (anonymous, sin tenant context aún).
+    # Hay que setear AMBOS GUCs porque la policy evalúa ambos lados del OR sin
+    # short-circuit, y `current_setting('app.current_tenant_id', true)::uuid`
+    # falla con InvalidTextRepresentation si está vacío. SET LOCAL vive 1 tx.
     async with conn.transaction():
+        await conn.execute("SET LOCAL app.current_tenant_id = '00000000-0000-0000-0000-000000000000'")
         await conn.execute("SET LOCAL app.is_superuser = 'true'")
         usuario = await conn.fetchrow(query, form_data.email)
 
