@@ -119,6 +119,41 @@ no `estado='ENVIADO'`. La tabla `borrador_feedback` mencionada en doc/exploraci�
 - **Voyage normaliza L2** los vectores → la distancia coseno es trivial: `1 - dot(a,b)`. Eficiente.
 - Las **5 hardcoded de Recovery** en local fallan FK (tenant no existe acá). En staging/prod sí están — el script las upserta correctamente cuando se corra ahí.
 
+## Fase 3 — Retrieval integrado en `generar_borrador_para_caso` (✅ HECHA en local 2026-05-26)
+
+### Cambios
+
+1. **`backend/app/services/rag_engine.py`** — módulo nuevo, signature única:
+   - `buscar_docs_similares(conn, tenant_id, asunto, cuerpo, *, tipo_caso=None, top_k=3, threshold=0.40, engine=None)`
+   - Construye query como `{asunto}\n\n{cuerpo[:800]}` (señal alta del asunto + body truncado).
+   - Embed con `input_type='query'`, retrieval con `<=>` (coseno) + filtros: `cliente_id`, `(1-sim) >= threshold`, opcional `tipo_caso`.
+   - **Degrada elegante**: si Voyage falla, devuelve `[]` y el caller sigue sin RAG (no rompe el worker).
+   - `formatear_contexto_para_prompt(docs)` — agrupa por source_type con secciones legibles (NORMATIVA APLICABLE / PLANTILLAS DE REFERENCIA / CASOS RESUELTOS).
+
+2. **`backend/app/services/plantilla_engine.py`** — cambios mínimos sin romper API:
+   - `generar_borrador_con_ia` acepta ahora kwargs opcionales `conn`, `tenant_id`.
+   - Si ambos están + `VOYAGE_API_KEY` configurada → invoca `buscar_docs_similares` y inyecta el contexto en el user prompt entre cuerpo e instrucciones finales.
+   - Si RAG falla, log warning + sigue sin contexto (igual a hoy).
+   - Atributo de módulo `_last_rag_docs` para que el caller persista los docs usados en audit.
+   - `generar_borrador_para_caso` ahora pasa `conn` + `tenant_id` y registra `metadata.rag_docs` (con source_type, source_id, sim_score) en `audit_log_respuestas`. Devuelve además `rag_docs_usados` en el dict.
+
+3. **`backend/tests/services/test_rag_engine.py`** — 19 tests con mocks: query building (5), happy paths (4), filtros (top-k, threshold, tipo_caso), degradación elegante (5 escenarios: query vacía, embed auth fail, embed generic fail, DB fail, sin docs ≥ threshold), formato del contexto (4).
+
+### Validación E2E real (en local, sin tocar prod)
+
+Test con caso "Quiero presentar una acción de tutela urgente":
+- Retrieval recuperó `decreto-2591-91-art-1` (sim **0.591**, vs 0.42 sin filtro/contexto previo).
+- Filtro por `tipo_caso='TUTELA'` funcionó (excluyó normativa de otros tipos).
+- Prompt final a Claude incluye sección "## NORMATIVA APLICABLE" con el texto completo del Decreto + instrucción "NO copies literal".
+- `_last_rag_docs` propaga los docs al caller para audit.
+
+Tests verde: 39/39 (19 rag + 20 embedding). Costo total Voyage sesión: ~770 tokens = $0.000092.
+
+### Política de uso
+
+- Solo se invoca RAG en el camino **B (sin plantilla)** — el camino A (plantilla exacta + variables) sigue como antes.
+- Si `_TODO en empresas.json` para MGT/EMSA Recovery fuera análogo aquí, el sistema sigue funcionando: si no hay docs ≥ threshold, no inyecta nada (cae al prompt original sin RAG).
+
 ## Lo que sigue
 
 1. **Usuario**: generar API key en https://dash.voyageai.com → guardar en
