@@ -39,3 +39,7 @@ brain_snapshots/
 brain_completo.tar.gz
 .env.local-backup-*
 *.orig
+_rediseno_shots/
+docker-compose.override.yml
+nginx/certs/*.key
+nginx/certs/*.orig
