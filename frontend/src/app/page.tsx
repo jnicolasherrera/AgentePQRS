@@ -130,9 +130,9 @@ export default function DashboardPage() {
           <button
             onClick={logout}
             aria-label="Cerrar sesión"
-            className="w-full p-3 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/10 agente items-center justify-center gap-2 font-bold transition-colors"
+            className="w-full px-3 py-2.5 rounded-lg text-white/60 hover:text-white hover:bg-white/10 agente items-center justify-center gap-2 text-sm font-medium transition-all duration-200 group"
           >
-            <LogOut className="w-4 h-4" /> Cerrar Sesión
+            <LogOut className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" /> Cerrar sesión
           </button>
           <button
             onClick={() => { setActiveTab("Configuración"); setSettingsSection("about"); }}
@@ -145,15 +145,46 @@ export default function DashboardPage() {
 
       {/* MAIN */}
       <main className="agente-1 min-h-0 px-12 py-10 z-10 overflow-y-auto agente agente-col custom-scrollbar">
-        <header className="agente items-center justify-between mb-10 border-b border-border pb-6 shrink-0">
-          <div>
-            <h1 className="text-3xl font-extrabold text-foreground agente items-center gap-3">
-              {TAB_TITLE[activeTab] ?? activeTab}
-              <span className="px-3 py-1 bg-green-500/10 border border-green-500/30 text-green-600 text-xs rounded-full agente items-center gap-1">
-                <Server className="w-3 h-3 animate-pulse" /> En línea
-              </span>
-            </h1>
-            <p className="text-muted-foreground mt-2 font-medium">Actualizaciones en tiempo real · Datos aislados por tenant</p>
+        <header className="agente items-center justify-between mb-8 pb-6 shrink-0 relative">
+          <div className="min-w-0">
+            {activeTab === "Dashboard" ? (
+              <>
+                <p className="text-[13px] text-muted-foreground/80 font-medium tracking-wide">
+                  {(() => {
+                    const h = new Date().getHours();
+                    const saludo = h < 12 ? "Buen día" : h < 19 ? "Buenas tardes" : "Buenas noches";
+                    const firstName = (user?.nombre || "").split(" ")[0] || "";
+                    return `${saludo}${firstName ? `, ${firstName}` : ""}`;
+                  })()}
+                </p>
+                <h1 className="text-[2.25rem] leading-tight font-black tracking-tight text-foreground mt-1">
+                  Resumen <span className="bg-gradient-to-r from-primary via-blue-500 to-brand-cyan bg-clip-text text-transparent">operativo</span>
+                </h1>
+                <div className="agente items-center gap-3 mt-2.5 text-xs text-muted-foreground">
+                  <span className="agente items-center gap-1.5">
+                    <span className="relative agente items-center justify-center w-2 h-2">
+                      <span className="absolute inset-0 rounded-full bg-green-500 animate-ping opacity-60"></span>
+                      <span className="relative w-2 h-2 rounded-full bg-green-500"></span>
+                    </span>
+                    En vivo
+                  </span>
+                  <span className="text-border">·</span>
+                  <span className="font-medium text-foreground/70">{user?.cliente_nombre || "Tenant"}</span>
+                  <span className="text-border">·</span>
+                  <span>Datos aislados por cliente</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <h1 className="text-3xl font-extrabold text-foreground agente items-center gap-3">
+                  {TAB_TITLE[activeTab] ?? activeTab}
+                  <span className="px-3 py-1 bg-green-500/10 border border-green-500/30 text-green-600 text-xs rounded-full agente items-center gap-1">
+                    <Server className="w-3 h-3 animate-pulse" /> En línea
+                  </span>
+                </h1>
+                <p className="text-muted-foreground mt-2 font-medium">Actualizaciones en tiempo real · Datos aislados por tenant</p>
+              </>
+            )}
           </div>
 
           <div className="agente items-center gap-3">

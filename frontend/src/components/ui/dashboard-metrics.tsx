@@ -100,11 +100,11 @@ export function DashboardMetrics({
   }
   if (!stats) return null;
 
-  const k = stats.kpis as unknown as Record<string, number>;
+  const k = stats.kpis;
   const activos = k.activos ?? ((k.abiertos || 0) + (k.en_proceso || 0));
   const total = k.total_casos || 0;
-  const tipos = (stats.distribucion_tipo || {}) as unknown as Record<string, number>;
-  const totalTipos = Object.values(tipos).reduce((a, b) => a + (b as number), 0) || 1;
+  const tipos = stats.distribucion_tipo || {};
+  const totalTipos = Object.values(tipos).reduce((a, b) => a + b, 0) || 1;
   const tutelas = tipos["TUTELA"] || 0;
   const tutelasPct = Math.round((tutelas / (total || 1)) * 100);
 
@@ -116,7 +116,13 @@ export function DashboardMetrics({
     TUTELA: "#dc2626", PETICION: "#035aa7", QUEJA: "#f59e0b",
     RECLAMO: "#8b5cf6", SOLICITUD: "#06b6d4", CONSULTA: "#64748b",
   };
-  const tiposOrdenados = Object.entries(tipos).sort((a, b) => (b[1] as number) - (a[1] as number));
+  const tiposOrdenados = Object.entries(tipos).sort((a, b) => b[1] - a[1]);
+
+  const ingresos = stats.ingresos_semana;
+  const ingresosTotal = ingresos?.total ?? 0;
+  const pqrPct = ingresosTotal > 0 ? Math.round(((ingresos?.pqr ?? 0) / ingresosTotal) * 100) : 0;
+  const tutelaPct = ingresosTotal > 0 ? Math.round(((ingresos?.tutela ?? 0) / ingresosTotal) * 100) : 0;
+  const pulsoTutelas = stats.tutelas;
 
   return (
     <div className="space-y-6 pb-10">
@@ -135,6 +141,111 @@ export function DashboardMetrics({
           ))}
         </div>
       </div>
+
+      {/* ===== INGRESOS DEL CORREO — PQR vs TUTELA (últimos 7 días) ===== */}
+      {ingresos && (
+        <div>
+          <SectionLabel icon={<Inbox className="w-3.5 h-3.5 text-primary" />}>
+            Lo que entró al correo · últimos 7 días
+          </SectionLabel>
+          <div className="glass-panel rounded-3xl p-6">
+            <div className="agente items-end justify-between gap-6 mb-5">
+              <div>
+                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Total ingresos</p>
+                <h3 className="text-5xl font-black tracking-tight text-foreground mt-1 tabular-nums">{nf(ingresosTotal)}</h3>
+                <p className="text-xs text-muted-foreground mt-1">correos clasificados por IA al ingresar</p>
+              </div>
+              <div className="agente agente-col items-end gap-1">
+                <div className="agente items-center gap-2 text-xs text-muted-foreground">
+                  <span className="w-2 h-2 rounded-full bg-primary"></span> PQR (petición · queja · reclamo · solicitud)
+                </div>
+                <div className="agente items-center gap-2 text-xs text-muted-foreground">
+                  <Scale className="w-3 h-3 text-red-600" /> Tutela
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-primary/5 p-5">
+                <div className="absolute inset-y-0 left-0 bg-primary/10" style={{ width: `${pqrPct}%` }} />
+                <div className="relative">
+                  <p className="text-[11px] font-bold text-primary uppercase tracking-widest">PQR</p>
+                  <div className="agente items-baseline gap-3 mt-2">
+                    <span className="text-4xl font-black text-foreground tabular-nums">{nf(ingresos.pqr)}</span>
+                    <span className="text-base font-bold text-primary">{pqrPct}%</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">peticiones, quejas, reclamos y solicitudes</p>
+                </div>
+              </div>
+              <div className="relative overflow-hidden rounded-2xl border border-red-500/25 bg-red-500/5 p-5">
+                <div className="absolute inset-y-0 left-0 bg-red-500/10" style={{ width: `${tutelaPct}%` }} />
+                <div className="relative">
+                  <p className="text-[11px] font-bold text-red-600 uppercase tracking-widest agente items-center gap-1.5">
+                    <Scale className="w-3 h-3" /> Tutela
+                  </p>
+                  <div className="agente items-baseline gap-3 mt-2">
+                    <span className="text-4xl font-black text-foreground tabular-nums">{nf(ingresos.tutela)}</span>
+                    <span className="text-base font-bold text-red-600">{tutelaPct}%</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">acciones de tutela (SLA legal 10 días)</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== PULSO DE TUTELAS + ESCALADAS DE PQR PREVIO (calidad de servicio) ===== */}
+      {pulsoTutelas && (
+        <div>
+          <SectionLabel icon={<Scale className="w-3.5 h-3.5 text-red-600" />}>
+            Pulso de tutelas — SLA legal 10 días
+          </SectionLabel>
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+            <div className="lg:col-span-3 grid grid-cols-3 gap-4">
+              <KpiCard label="Tutelas activas" value={nf(pulsoTutelas.activas)} accent="red"
+                icon={<Scale className="w-5 h-5" />} sub={`${pulsoTutelas.total} totales`} />
+              <KpiCard label="Vencidas" value={nf(pulsoTutelas.vencidas)} accent="red"
+                alert={pulsoTutelas.vencidas > 0}
+                icon={<AlertTriangle className="w-5 h-5" />} sub="SLA legal incumplido" />
+              <KpiCard label="Por vencer" value={nf(pulsoTutelas.por_vencer)} accent="orange"
+                icon={<Clock className="w-5 h-5" />} sub="≤48h restantes" />
+            </div>
+            {/* KPI ESTRELLA: tasa de escalamiento de PQR a Tutela */}
+            <div className="lg:col-span-2 glass-panel rounded-3xl p-5 agente agente-col justify-between">
+              <div>
+                <div className="agente items-center gap-2 mb-2">
+                  <div className="p-1.5 rounded-lg bg-red-500/15 text-red-600">
+                    <Scale className="w-4 h-4" />
+                  </div>
+                  <p className="text-[11px] font-bold text-red-600 uppercase tracking-widest">
+                    Escaladas de PQR previo
+                  </p>
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Tutelas cuyo demandante ya había enviado un PQR sobre el mismo asunto
+                  en los últimos 90 días. <span className="text-foreground/80 font-medium">Métrica de calidad de servicio</span>:
+                  si crece, estamos respondiendo mal y la gente termina en la justicia.
+                </p>
+              </div>
+              <div>
+                <div className="agente items-baseline gap-3">
+                  <span className="text-5xl font-black text-red-600 tabular-nums leading-none">
+                    {pulsoTutelas.tasa_escalamiento}%
+                  </span>
+                  <span className="text-sm text-muted-foreground">
+                    {nf(pulsoTutelas.escaladas_de_pqr)} de {nf(pulsoTutelas.total)} tutelas
+                  </span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-muted mt-3 overflow-hidden">
+                  <motion.div initial={{ width: 0 }} animate={{ width: `${pulsoTutelas.tasa_escalamiento}%` }}
+                    transition={{ duration: 0.9 }}
+                    className="h-full bg-gradient-to-r from-red-500 to-red-600 rounded-full" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ===== OPERACIÓN ACTUAL  vs  HISTÓRICO ===== */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">

@@ -37,6 +37,7 @@ async def get_dashboard_stats(
     w = "WHERE " + " AND ".join(filtros)
 
     # KPIs en una sola query con COUNT(*) FILTER (1 RTT vs 14)
+    # Incluye breakdown PQR/TUTELA y pulso de tutelas (SLA propio, 10 días).
     kpi = await conn.fetchrow(f"""
         SELECT
           COUNT(*) AS total_casos,
@@ -54,23 +55,45 @@ async def get_dashboard_stats(
                             AND estado != 'CERRADO')                     AS por_vencer,
           COUNT(*) FILTER (WHERE asignado_a IS NOT NULL)                 AS asignados,
           COUNT(*) FILTER (WHERE acuse_enviado = TRUE)                   AS con_acuse,
-          COUNT(*) FILTER (WHERE estado IN ('CONTESTADO','CERRADO'))     AS respondidos
+          COUNT(*) FILTER (WHERE estado IN ('CONTESTADO','CERRADO'))     AS respondidos,
+          -- Breakdown PQR vs Tutela (últimos 7 días = "lo que entró al correo")
+          COUNT(*) FILTER (WHERE tipo_caso IN ('PETICION','QUEJA','RECLAMO','SOLICITUD','SUGERENCIA')
+                            AND fecha_recibido >= CURRENT_DATE - INTERVAL '7 days') AS ingresos_pqr_semana,
+          COUNT(*) FILTER (WHERE tipo_caso = 'TUTELA'
+                            AND fecha_recibido >= CURRENT_DATE - INTERVAL '7 days') AS ingresos_tutela_semana,
+          -- Pulso TUTELAS (SLA legal 10 días, tracking separado)
+          COUNT(*) FILTER (WHERE tipo_caso='TUTELA' AND estado IN ('ABIERTO','EN_PROCESO')) AS tutelas_activas,
+          COUNT(*) FILTER (WHERE tipo_caso='TUTELA' AND fecha_vencimiento < NOW() AND estado != 'CERRADO') AS tutelas_vencidas,
+          COUNT(*) FILTER (WHERE tipo_caso='TUTELA' AND fecha_vencimiento >= NOW()
+                            AND fecha_vencimiento <= NOW() + INTERVAL '48 hours'
+                            AND estado != 'CERRADO') AS tutelas_por_vencer,
+          COUNT(*) FILTER (WHERE tipo_caso='TUTELA')                     AS tutelas_total,
+          -- Tutelas escaladas de PQR previo (poblado por master_worker al ingestar)
+          COUNT(*) FILTER (WHERE tipo_caso='TUTELA'
+                            AND COALESCE(array_length(pqr_origenes, 1), 0) > 0) AS tutelas_escaladas
         FROM pqrs_casos {w}
     """, *params)
-    total_casos    = kpi['total_casos']
-    total_criticos = kpi['total_criticos']
-    abiertos       = kpi['abiertos']
-    en_proceso     = kpi['en_proceso']
-    contestados    = kpi['contestados']
-    cerrados       = kpi['cerrados']
-    activos        = kpi['activos']
-    casos_hoy      = kpi['casos_hoy']
-    casos_semana   = kpi['casos_semana']
-    vencidos       = kpi['vencidos']
-    por_vencer     = kpi['por_vencer']
-    asignados      = kpi['asignados']
-    con_acuse      = kpi['con_acuse']
-    respondidos    = kpi['respondidos']
+    total_casos        = kpi['total_casos']
+    total_criticos     = kpi['total_criticos']
+    abiertos           = kpi['abiertos']
+    en_proceso         = kpi['en_proceso']
+    contestados        = kpi['contestados']
+    cerrados           = kpi['cerrados']
+    activos            = kpi['activos']
+    casos_hoy          = kpi['casos_hoy']
+    casos_semana       = kpi['casos_semana']
+    vencidos           = kpi['vencidos']
+    por_vencer         = kpi['por_vencer']
+    asignados          = kpi['asignados']
+    con_acuse          = kpi['con_acuse']
+    respondidos        = kpi['respondidos']
+    ingresos_pqr       = kpi['ingresos_pqr_semana']
+    ingresos_tutela    = kpi['ingresos_tutela_semana']
+    tutelas_activas    = kpi['tutelas_activas']
+    tutelas_vencidas   = kpi['tutelas_vencidas']
+    tutelas_por_vencer = kpi['tutelas_por_vencer']
+    tutelas_total      = kpi['tutelas_total']
+    tutelas_escaladas  = kpi['tutelas_escaladas']
 
     estados_records = await conn.fetch(f"SELECT estado, COUNT(*) as count FROM pqrs_casos {w} GROUP BY estado", *params)
     distribucion_estados = {r['estado']: r['count'] for r in estados_records}
@@ -105,6 +128,8 @@ async def get_dashboard_stats(
 
     porcentaje_efectividad = round((cerrados / total_casos * 100), 1) if total_casos > 0 else 0
 
+    tasa_escalamiento = round((tutelas_escaladas / tutelas_total * 100), 1) if tutelas_total > 0 else 0
+
     return {
         "kpis": {
             "total_casos": total_casos,
@@ -119,6 +144,19 @@ async def get_dashboard_stats(
             "vencidos": vencidos,
             "por_vencer": por_vencer,
             "activos": activos
+        },
+        "ingresos_semana": {
+            "pqr": ingresos_pqr,
+            "tutela": ingresos_tutela,
+            "total": ingresos_pqr + ingresos_tutela,
+        },
+        "tutelas": {
+            "activas": tutelas_activas,
+            "vencidas": tutelas_vencidas,
+            "por_vencer": tutelas_por_vencer,
+            "total": tutelas_total,
+            "escaladas_de_pqr": tutelas_escaladas,
+            "tasa_escalamiento": tasa_escalamiento,
         },
         "trazabilidad": {
             "recibidos":   total_casos,

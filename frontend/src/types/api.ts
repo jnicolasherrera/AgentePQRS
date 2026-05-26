@@ -50,6 +50,23 @@ export interface KPIs {
   casos_hoy: number;
   casos_semana: number;
   vencidos: number;
+  por_vencer?: number;
+  activos?: number;
+}
+
+export interface IngresosSemana {
+  pqr: number;
+  tutela: number;
+  total: number;
+}
+
+export interface PulsoTutelas {
+  activas: number;
+  vencidas: number;
+  por_vencer: number;
+  total: number;
+  escaladas_de_pqr: number;
+  tasa_escalamiento: number;
 }
 
 export interface CasoResumen {
@@ -74,6 +91,8 @@ export interface Trazabilidad {
 
 export interface DashboardStats {
   kpis: KPIs;
+  ingresos_semana?: IngresosSemana;
+  tutelas?: PulsoTutelas;
   trazabilidad: Trazabilidad;
   distribucion: Record<string, number>;
   distribucion_tipo: Record<string, number>;
