@@ -122,21 +122,24 @@ async def me(
 
     `workflows_disponibles` = UNIÓN de:
       1) DISTINCT tipo_workflow de config_buzones is_active=TRUE del tenant.
-      2) DISTINCT tipo_workflow de casos existentes (pqrs_casos).
-      3) DISTINCT tipo_workflow de plantillas activas del tenant.
+      2) DISTINCT tipo_workflow de plantillas activas del tenant.
 
-    Hotfix 2026-05-27: antes solo (1). Pero FlexFintech tenía 3 casos AC + 49
-    plantillas AC seedeadas pero 0 buzones AC (default migración) → la UI
-    AC quedaba oculta aunque los datos existían. La unión refleja mejor "el
-    tenant USA AC" que "el tenant tiene buzones AC". Default seguro: ["PQRS"].
+    NO se considera pqrs_casos: casos sueltos mal clasificados (ej. data de
+    prueba) no deben activar la UI AC de un tenant que NO está configurado
+    para AC. La señal correcta es "el tenant tiene buzones AC O plantillas AC
+    seedeadas" — eso refleja un setup intencional.
+
+    Hotfix 2026-05-27 v2: antes detectaba por casos también, lo que activaba
+    la UI AC en Abogados Recovery por 2 casos sueltos (sin plantillas AC).
+    Recovery debe ver solo PQRS. FlexFintech mantiene AC por sus 49 plantillas.
+
+    Default seguro: ["PQRS"].
     """
     es_super = current_user.role == 'super_admin'
 
     if es_super:
         rows = await conn.fetch("""
             SELECT tipo_workflow FROM config_buzones WHERE is_active = TRUE
-            UNION
-            SELECT DISTINCT tipo_workflow FROM pqrs_casos
             UNION
             SELECT DISTINCT tipo_workflow FROM plantillas_respuesta WHERE is_active = TRUE
         """)
@@ -146,9 +149,6 @@ async def me(
         rows = await conn.fetch("""
             SELECT tipo_workflow FROM config_buzones
              WHERE cliente_id = $1::uuid AND is_active = TRUE
-            UNION
-            SELECT DISTINCT tipo_workflow FROM pqrs_casos
-             WHERE cliente_id = $1::uuid
             UNION
             SELECT DISTINCT tipo_workflow FROM plantillas_respuesta
              WHERE cliente_id = $1::uuid AND is_active = TRUE
