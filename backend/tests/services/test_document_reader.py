@@ -7,11 +7,15 @@ import zipfile
 
 import pytest
 
+from unittest.mock import MagicMock, patch
+
 from app.services.document_reader import (
     MAX_CHARS_POR_ADJUNTO,
     extract_from_adjuntos,
     extract_text,
     _detectar_formato,
+    _extract_with_vision,
+    _image_media_type,
 )
 
 
@@ -72,9 +76,13 @@ class TestDetectarFormato:
         ("page.html", "", "text"),
         ("notes.md", "", "text"),
         ("x", "text/plain", "text"),
-        ("foto.jpg", "image/jpeg", "unsupported"),
-        ("doc.doc", "", "unsupported"),  # .doc legacy no soportado en F1
-        ("scan.tiff", "image/tiff", "unsupported"),
+        # F2: imágenes y PDFs escaneados ahora van por visión
+        ("foto.jpg", "image/jpeg", "image"),
+        ("escaneo.PNG", "", "image"),
+        ("foto.webp", "", "image"),
+        ("x", "image/png", "image"),
+        ("doc.doc", "", "unsupported"),  # .doc legacy aún no soportado
+        ("scan.tiff", "image/tiff", "unsupported"),  # TIFF no es image/* soportado por Anthropic
     ])
     def test_detecta(self, filename, ct, expected):
         assert _detectar_formato(filename, ct) == expected
@@ -86,19 +94,22 @@ class TestDetectarFormato:
 
 class TestExtractPDF:
     def test_pdf_con_texto(self):
+        # enable_vision=False: testeamos pdfplumber puro (sin caer a Claude)
         pdf = _make_pdf_simple(
-            "PROCESO 2026-001\nJuzgado 5 Civil\nTutela contra FlexFintech"
+            "PROCESO 2026-001\nJuzgado 5 Civil\nTutela contra FlexFintech\n"
+            + "Texto adicional para superar el umbral de 100 chars del fallback vision.\n"
+            * 3
         )
-        text = extract_text(pdf, "tutela.pdf")
+        text = extract_text(pdf, "tutela.pdf", enable_vision=False)
         assert "PROCESO 2026-001" in text
         assert "Juzgado 5" in text
         assert "FlexFintech" in text
 
     def test_pdf_corrupto_devuelve_vacio(self):
-        assert extract_text(b"no es un pdf", "x.pdf") == ""
+        assert extract_text(b"no es un pdf", "x.pdf", enable_vision=False) == ""
 
     def test_pdf_vacio_devuelve_vacio(self):
-        assert extract_text(b"", "x.pdf") == ""
+        assert extract_text(b"", "x.pdf", enable_vision=False) == ""
 
 
 class TestExtractDOCX:
@@ -171,14 +182,19 @@ class TestExtractFromAdjuntos:
         assert extract_from_adjuntos([]) == ""
 
     def test_un_adjunto_pdf(self):
+        # PDF con texto suficiente para que NO caiga a vision
         adj = [{
             "nombre_archivo": "tutela.pdf",
-            "content_bytes": _make_pdf_simple("ACCION DE TUTELA PROCESO 555"),
+            "content_bytes": _make_pdf_simple(
+                "ACCION DE TUTELA PROCESO 555\n" * 10
+            ),
             "content_type": "application/pdf",
         }]
+        # extract_from_adjuntos llama extract_text con default enable_vision=True,
+        # pero como el texto extraído va a ser > 100 chars, no cae a vision.
         bloque = extract_from_adjuntos(adj)
         assert "--- ADJUNTO 1: tutela.pdf ---" in bloque
-        assert "ACCION DE TUTELA" in bloque
+        assert "ACCION DE TUTELA" in bloque or "ACCIÓN DE TUTELA" in bloque
 
     def test_multiples_formatos(self):
         adj = [
@@ -222,3 +238,109 @@ class TestExtractFromAdjuntos:
         bloque = extract_from_adjuntos(adj, max_chars_total=3000)
         # No debería pasar mucho de 3000 (más algunos chars de markers)
         assert len(bloque) <= 4500
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# F2 — Claude visión (mockean Anthropic)
+# ──────────────────────────────────────────────────────────────────────────
+
+def _mock_anthropic_response(text: str):
+    """Construye un mock de anthropic.Anthropic().messages.create()."""
+    resp = MagicMock()
+    resp.content = [MagicMock(text=text)]
+    client = MagicMock()
+    client.messages.create = MagicMock(return_value=resp)
+    return client
+
+
+class TestImageMediaType:
+    @pytest.mark.parametrize("filename,ct,expected", [
+        ("x.jpg", "", "image/jpeg"),
+        ("x.JPEG", "", "image/jpeg"),
+        ("x.png", "", "image/png"),
+        ("x.gif", "", "image/gif"),
+        ("x.webp", "", "image/webp"),
+        ("x", "image/png", "image/png"),
+        ("x.tiff", "image/tiff", "image/jpeg"),  # tiff no soportado → fallback
+        ("desconocido", "", "image/jpeg"),       # fallback default
+    ])
+    def test_media_type(self, filename, ct, expected):
+        assert _image_media_type(filename, ct) == expected
+
+
+class TestVisionExtract:
+    def test_imagen_jpg_llama_visión(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        fake_client = _mock_anthropic_response(
+            "Cédula: 1007403296\nNombre: Juan Pérez"
+        )
+        with patch("anthropic.Anthropic", return_value=fake_client):
+            txt = extract_text(b"\xff\xd8\xff\xe0fakejpegcontent",
+                               "cedula.jpg", "image/jpeg")
+        assert "1007403296" in txt
+        assert "Juan Pérez" in txt
+        # Verifica que se llamó con el bloque image
+        call_kwargs = fake_client.messages.create.call_args.kwargs
+        content_blocks = call_kwargs["messages"][0]["content"]
+        assert content_blocks[0]["type"] == "image"
+        assert content_blocks[0]["source"]["media_type"] == "image/jpeg"
+
+    def test_pdf_escaneado_cae_a_vision(self, monkeypatch):
+        """PDF sin texto extraíble → cae a Claude visión."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        fake_client = _mock_anthropic_response(
+            "JUZGADO 5 CIVIL\nPROCESO 2026-001"
+        )
+        # PDF "vacío" (sin texto extraíble por pdfplumber)
+        with patch("anthropic.Anthropic", return_value=fake_client):
+            with patch("app.services.document_reader._extract_pdf", return_value=""):
+                txt = extract_text(b"%PDF-fake", "scan.pdf", "application/pdf")
+        assert "JUZGADO 5" in txt
+        # Verifica bloque document (PDF)
+        content_blocks = fake_client.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert content_blocks[0]["type"] == "document"
+        assert content_blocks[0]["source"]["media_type"] == "application/pdf"
+
+    def test_pdf_con_texto_NO_llama_vision(self, monkeypatch):
+        """PDF text-based con texto suficiente → NO llama vision (ahorra costo)."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        fake_client = _mock_anthropic_response("from_vision")
+        # Mock que _extract_pdf devuelve texto suficiente
+        with patch("anthropic.Anthropic", return_value=fake_client):
+            with patch("app.services.document_reader._extract_pdf",
+                       return_value="Texto extraído del PDF " * 20):
+                txt = extract_text(b"%PDF", "doc.pdf", "application/pdf")
+        assert "Texto extraído" in txt
+        assert "from_vision" not in txt
+        fake_client.messages.create.assert_not_called()
+
+    def test_vision_disabled_skipea_imagen(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        fake_client = _mock_anthropic_response("x")
+        with patch("anthropic.Anthropic", return_value=fake_client):
+            txt = extract_text(b"\xff\xd8fake", "foto.jpg", "image/jpeg",
+                               enable_vision=False)
+        assert txt == ""
+        fake_client.messages.create.assert_not_called()
+
+    def test_sin_api_key_devuelve_vacio(self, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        txt = _extract_with_vision(b"fake", "x.jpg", "image/jpeg", es_pdf=False)
+        assert txt == ""
+
+    def test_archivo_muy_grande_skipea(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        big = b"x" * (6 * 1024 * 1024)  # 6 MB > 5 MB limit
+        fake_client = _mock_anthropic_response("x")
+        with patch("anthropic.Anthropic", return_value=fake_client):
+            txt = _extract_with_vision(big, "big.jpg", "image/jpeg", es_pdf=False)
+        assert txt == ""
+        fake_client.messages.create.assert_not_called()
+
+    def test_anthropic_falla_devuelve_vacio(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        fake_client = MagicMock()
+        fake_client.messages.create = MagicMock(side_effect=RuntimeError("API down"))
+        with patch("anthropic.Anthropic", return_value=fake_client):
+            txt = _extract_with_vision(b"fake", "x.jpg", "image/jpeg", es_pdf=False)
+        assert txt == ""  # log warn + sigue

@@ -23,8 +23,10 @@ romper el flow de generación de borrador.
 
 from __future__ import annotations
 
+import base64
 import io
 import logging
+import os
 from typing import Iterable
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,14 @@ logger = logging.getLogger(__name__)
 MAX_CHARS_POR_ADJUNTO = 3000
 MAX_CHARS_TOTAL = 8000
 MAX_ADJUNTOS = 5
+
+# F2 — Claude visión para PDFs escaneados + imágenes
+# Sprint FF 2026-05-27
+VISION_MAX_BYTES = 5 * 1024 * 1024            # 5 MB hard limit Anthropic
+VISION_MIN_TEXT_CHARS_PDF = 100               # PDF text < N → asumir escaneado
+VISION_MODEL = "claude-haiku-4-5-20251001"   # más barato, suficiente para extract
+VISION_MAX_TOKENS = 1500
+_VISION_IMAGE_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -113,7 +123,7 @@ def _extract_text_plain(content: bytes) -> str:
 # ──────────────────────────────────────────────────────────────────────────
 
 def _detectar_formato(filename: str, content_type: str) -> str:
-    """Devuelve 'pdf' | 'docx' | 'xlsx' | 'text' | 'unsupported'."""
+    """Devuelve 'pdf' | 'docx' | 'xlsx' | 'text' | 'image' | 'unsupported'."""
     fn = (filename or "").lower()
     ct = (content_type or "").lower()
 
@@ -128,8 +138,97 @@ def _detectar_formato(filename: str, content_type: str) -> str:
         return "text"
     if ct.startswith("text/"):
         return "text"
-    # Imágenes y .doc legacy → no soportado en F1
+    # F2: solo formatos de imagen soportados por Anthropic visión
+    if any(fn.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp")):
+        return "image"
+    if ct in _VISION_IMAGE_TYPES:
+        return "image"
+    # .doc legacy + TIFF + otros → no soportado
     return "unsupported"
+
+
+def _image_media_type(filename: str, content_type: str) -> str:
+    """Normaliza el media_type para Anthropic vision (image/jpeg|png|gif|webp)."""
+    ct = (content_type or "").lower().strip()
+    if ct in _VISION_IMAGE_TYPES:
+        return ct
+    fn = (filename or "").lower()
+    if fn.endswith((".jpg", ".jpeg")):
+        return "image/jpeg"
+    if fn.endswith(".png"):
+        return "image/png"
+    if fn.endswith(".gif"):
+        return "image/gif"
+    if fn.endswith(".webp"):
+        return "image/webp"
+    return "image/jpeg"  # fallback
+
+
+def _extract_with_vision(content: bytes, filename: str, content_type: str,
+                         es_pdf: bool) -> str:
+    """Extrae texto vía Claude visión (PDFs escaneados + imágenes).
+
+    Sprint FF F2 2026-05-27 — best-effort. Si falla (API key faltante,
+    archivo demasiado grande, Anthropic error), devuelve "" y el caller
+    sigue sin texto extraído.
+
+    Costo aproximado por llamada: $0.005-0.05 (Haiku, hasta 1500 tokens out).
+    Cap por adjunto: 5MB.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        logger.info("vision: ANTHROPIC_API_KEY ausente — skip")
+        return ""
+
+    if len(content) > VISION_MAX_BYTES:
+        logger.warning("vision: doc %s muy grande (%d bytes > %d) — skip",
+                       filename, len(content), VISION_MAX_BYTES)
+        return ""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        b64 = base64.standard_b64encode(content).decode("utf-8")
+
+        if es_pdf:
+            doc_block = {
+                "type": "document",
+                "source": {"type": "base64",
+                           "media_type": "application/pdf",
+                           "data": b64},
+            }
+        else:
+            mt = _image_media_type(filename, content_type)
+            doc_block = {
+                "type": "image",
+                "source": {"type": "base64", "media_type": mt, "data": b64},
+            }
+
+        prompt = (
+            "Extrae el texto del siguiente documento (legal u operativo) en "
+            "español. Si es una tutela / oficio / decreto / sentencia / auto "
+            "judicial, identifica: número de proceso, juzgado, partes (accionante "
+            "y accionado), causa o materia, plazos y decisión si la hay. Si es "
+            "un comprobante de pago: fecha, monto, beneficiario, referencia. "
+            "Si es un documento de identidad: tipo, número, nombre. "
+            "Devuelve SOLO el texto/datos extraídos en formato legible, sin "
+            "comentarios meta tipo 'aquí está el texto'."
+        )
+
+        resp = client.messages.create(
+            model=VISION_MODEL,
+            max_tokens=VISION_MAX_TOKENS,
+            messages=[{
+                "role": "user",
+                "content": [doc_block, {"type": "text", "text": prompt}],
+            }],
+        )
+        txt = (resp.content[0].text or "").strip() if resp.content else ""
+        logger.info("vision OK %s: %d chars extraídos", filename, len(txt))
+        return txt
+    except Exception as e:
+        logger.warning("vision extract falló para %s: %s", filename, e)
+        return ""
 
 
 def extract_text(
@@ -137,8 +236,17 @@ def extract_text(
     filename: str = "",
     content_type: str = "",
     max_chars: int = MAX_CHARS_POR_ADJUNTO,
+    *,
+    enable_vision: bool = True,
 ) -> str:
     """Extrae texto de un adjunto. Devuelve "" si no se puede leer.
+
+    Pipeline:
+    1. Detecta formato por extension/content_type.
+    2. Para PDF/DOCX/XLSX/TEXT: extrae localmente (gratis, rápido).
+    3. F2: Si el PDF text extraction devuelve muy poco texto (asumir
+       escaneado) Y `enable_vision=True` → Claude visión.
+    4. F2: Imágenes (JPG/PNG/GIF/WEBP) → Claude visión directo.
 
     NUNCA levanta excepciones — best-effort con log warn ante errores.
     """
@@ -146,16 +254,31 @@ def extract_text(
         return ""
 
     fmt = _detectar_formato(filename, content_type)
+    text = ""
+
     if fmt == "pdf":
         text = _extract_pdf(content)
+        # F2: PDF con poco texto extraíble → probablemente escaneado → visión
+        if enable_vision and len(text) < VISION_MIN_TEXT_CHARS_PDF:
+            logger.info("PDF %s text-extract dió %d chars — usando visión",
+                        filename, len(text))
+            vision_text = _extract_with_vision(content, filename, content_type, es_pdf=True)
+            if vision_text:
+                text = vision_text
     elif fmt == "docx":
         text = _extract_docx(content)
     elif fmt == "xlsx":
         text = _extract_xlsx(content)
     elif fmt == "text":
         text = _extract_text_plain(content)
+    elif fmt == "image":
+        if enable_vision:
+            text = _extract_with_vision(content, filename, content_type, es_pdf=False)
+        else:
+            logger.info("image %s: vision disabled — skip", filename)
+            return ""
     else:
-        logger.info("formato no soportado en F1: %s / %s", filename, content_type)
+        logger.info("formato no soportado: %s / %s", filename, content_type)
         return ""
 
     # Truncar y limpiar
