@@ -21,10 +21,13 @@ export function DashboardMetrics({
   selectedClienteId = "", onVerTodos,
 }: { selectedClienteId?: string; onVerTodos?: () => void }) {
   const { user } = useAuthStore();
-  const { stats, loading } = useDashboardStats(selectedClienteId);
   const [periodo, setPeriodo] = useState<Periodo>("semana");
+  const { stats, loading } = useDashboardStats(selectedClienteId, periodo);
   const isAdmin = user?.rol === "admin" || user?.rol === "super_admin";
   const { data: tendencia } = useTendencia(periodo, selectedClienteId, isAdmin);
+
+  // Etiqueta humana del período actual (para títulos dinámicos)
+  const periodoLabel = periodo === "dia" ? "hoy" : periodo === "semana" ? "últimos 7 días" : "últimos 30 días";
 
   if (loading && !stats) {
     return (
@@ -57,7 +60,7 @@ export function DashboardMetrics({
 
   const tiposOrdenados = Object.entries(tipos).sort((a, b) => b[1] - a[1]);
 
-  const ingresos = stats.ingresos_semana;
+  const ingresos = stats.ingresos_periodo ?? stats.ingresos_semana;
   const ingresosTotal = ingresos?.total ?? 0;
   const pqrPct = ingresosTotal > 0 ? Math.round(((ingresos?.pqr ?? 0) / ingresosTotal) * 100) : 0;
   const tutelaPct = ingresosTotal > 0 ? Math.round(((ingresos?.tutela ?? 0) / ingresosTotal) * 100) : 0;
@@ -81,11 +84,11 @@ export function DashboardMetrics({
         </div>
       </div>
 
-      {/* ===== INGRESOS DEL CORREO — PQR vs TUTELA (últimos 7 días) ===== */}
+      {/* ===== INGRESOS DEL CORREO — PQR vs TUTELA (período dinámico) ===== */}
       {ingresos && (
         <div>
           <SectionLabel icon={<Inbox className="w-3.5 h-3.5 text-primary" />}>
-            Lo que entró al correo · últimos 7 días
+            Lo que entró al correo · {periodoLabel}
           </SectionLabel>
           <div className="glass-panel rounded-3xl p-6">
             <div className="agente items-end justify-between gap-6 mb-5">
