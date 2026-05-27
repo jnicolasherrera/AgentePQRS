@@ -15,6 +15,7 @@ from app.services.ab_test_engine import (
     persistir_variant,
     registrar_shadow_para_caso,
 )
+from app.services.document_reader import extract_from_adjuntos
 
 logger = logging.getLogger("PLANTILLA_ENGINE")
 
@@ -80,6 +81,7 @@ async def generar_borrador_con_ia(
     conn: Optional[asyncpg.Connection] = None,
     tenant_id: Optional[str] = None,
     tipo_workflow: str = "PQRS",
+    contexto_adjuntos: Optional[str] = None,
 ) -> Optional[str]:
     """Genera borrador con Claude Haiku cuando no hay plantilla disponible.
 
@@ -148,10 +150,19 @@ async def generar_borrador_con_ia(
             "al caso específico.\n\n"
         ) if contexto_rag else ""
 
+        # Sprint FF F1 2026-05-27: inyectar texto extraído de adjuntos si existe.
+        # Claude considera el contenido de los PDFs/DOCX al armar el borrador.
+        bloque_adjuntos = (
+            f"\n\nDOCUMENTOS ADJUNTOS AL CORREO:\n{contexto_adjuntos}\n\n"
+            "Usa la información de los adjuntos para personalizar la respuesta "
+            "(menciona el proceso, número, fecha o detalles relevantes si aplica).\n"
+        ) if contexto_adjuntos else ""
+
         user_msg = (
             f"Redacta la respuesta {saludo} al siguiente caso:\n\n"
             f"Asunto: {asunto}\n\n"
             f"Contenido del correo:\n{cuerpo[:1500]}\n"
+            f"{bloque_adjuntos}"
             f"{bloque_contexto}"
             f"{instrucciones_finales}"
         )
@@ -207,6 +218,41 @@ def detectar_problematica(asunto: str, cuerpo: str) -> Optional[str]:
         if any(k in texto for k in kw_base):
             return slug
     return None
+
+
+async def _leer_adjuntos_para_contexto(conn, caso_id: str) -> Optional[str]:
+    """Lee adjuntos ORIGINALES (es_reply=FALSE) del caso desde MinIO,
+    extrae texto y devuelve un bloque listo para inyectar al prompt.
+
+    Best-effort: si falla, log warn + devuelve None (sigue sin contexto).
+    Sprint FF F1 2026-05-27.
+    """
+    try:
+        from app.services.storage_engine import download_file
+        rows = await conn.fetch(
+            "SELECT nombre_archivo, storage_path, content_type "
+            "FROM pqrs_adjuntos WHERE caso_id = $1::uuid AND es_reply = FALSE "
+            "ORDER BY created_at ASC",
+            uuid.UUID(caso_id),
+        )
+        if not rows:
+            return None
+        adjuntos = []
+        for r in rows:
+            content = download_file(r["storage_path"])
+            if content:
+                adjuntos.append({
+                    "nombre_archivo": r["nombre_archivo"],
+                    "content_bytes": content,
+                    "content_type": r["content_type"] or "",
+                })
+        if not adjuntos:
+            return None
+        bloque = extract_from_adjuntos(adjuntos)
+        return bloque if bloque else None
+    except Exception as e:
+        logger.warning("leer adjuntos para contexto falló: %s", e)
+        return None
 
 
 async def detectar_problematica_dinamica(
@@ -340,6 +386,7 @@ async def generar_borrador_para_caso(
     fecha_vencimiento: Optional[str] = None,
     *,
     tipo_workflow: str = "PQRS",
+    adjuntos_inline: Optional[list] = None,
 ) -> dict:
     """
     Detecta problemática, obtiene plantilla, personaliza borrador y actualiza pqrs_casos.
@@ -380,10 +427,21 @@ async def generar_borrador_para_caso(
         # para PQRS sin tipo_caso clasificado, cae a SOLICITUD genérico.
         # (Fix 2026-05-27: antes solo llamaba si tipo_caso truthy → casos AC
         # con problemática Recovery quedaban SIN_PLANTILLA + sin respuesta.)
+
+        # Sprint FF F1: inyectar texto de adjuntos al prompt.
+        # Prioridad: si el caller pasó adjuntos_inline (worker en runtime que
+        # ya los descargó), extraer de ahí. Si no, leer de pqrs_adjuntos
+        # (caso re-generación / batch sobre casos existentes).
+        if adjuntos_inline:
+            contexto_adjuntos = extract_from_adjuntos(adjuntos_inline) or None
+        else:
+            contexto_adjuntos = await _leer_adjuntos_para_contexto(conn, caso_id)
+
         borrador = await generar_borrador_con_ia(
             asunto, cuerpo, tipo_caso, nombre_cliente,
             conn=conn, tenant_id=tenant_id,
             tipo_workflow=tipo_workflow,
+            contexto_adjuntos=contexto_adjuntos,
         )
         estado   = "PENDIENTE" if borrador else "SIN_PLANTILLA"
         pid      = None

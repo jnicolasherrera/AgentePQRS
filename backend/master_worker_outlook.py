@@ -270,6 +270,44 @@ def _extraer_cedula_del_cuerpo(cuerpo):
     return digits if 6 <= len(digits) <= 12 else None
 
 
+def _download_attachments_inline(em, prov):
+    """Descarga los adjuntos del email en memoria (sin uploadear todavía).
+
+    Devuelve lista de dicts {nombre_archivo, content_bytes, content_type, raw_meta}
+    para alimentar el borrador con texto extraído. El raw_meta sirve para
+    el upload posterior a MinIO/SP sin re-descargar.
+
+    Best-effort: cada adjunto que falle se loggea y skipea. NUNCA propaga.
+    Sprint FF F1 2026-05-27.
+    """
+    out = []
+    for att in (em.get('attachments') or []):
+        try:
+            if prov == 'OUTLOOK':
+                a_name = att['name']; a_id = att['id']
+                a_type = att.get('contentType', 'application/octet-stream')
+                a_size = att.get('size', 0)
+                content = em['prov_obj'].download_attachment(em['email_buzon'], em['id'], a_id)
+            elif prov == 'ZOHO':
+                a_name = att.get('attachmentName', 'unknown')
+                a_id = att.get('attachmentId', '')
+                a_type = att.get('contentType', 'application/octet-stream')
+                a_size = att.get('attachmentSize', 0)
+                content = em['prov_obj'].download_attachment(em['id'], a_id, folder_id=em.get('folder_id'))
+            else:
+                continue
+            if content:
+                out.append({
+                    "nombre_archivo": a_name,
+                    "content_bytes": content,
+                    "content_type": a_type,
+                    "size": int(a_size or 0),
+                })
+        except Exception as e:
+            logger.warning(f"download_attachment falló para {att}: {e}")
+    return out
+
+
 async def procesar_atencion_cliente(conn, r, em, c_id, b, dt, prov):
     """Flow simplificado para emails clasificados como ATENCION_CLIENTE
     (consultas operativas, no PQRS legal).
@@ -342,6 +380,11 @@ async def procesar_atencion_cliente(conn, r, em, c_id, b, dt, prov):
         logger.info(f"⏭️  AC email ya procesado: {(em['id'] or '')[:20]}")
         return None
 
+    # Sprint FF F1: descargar adjuntos para contexto del borrador
+    adjuntos_descargados = _download_attachments_inline(em, prov) if em.get('attachments') else []
+    if adjuntos_descargados:
+        logger.info(f"📎 AC {len(adjuntos_descargados)} adjuntos descargados para contexto (caso {db_id})")
+
     # Borrador con plantillas AC (filter en obtener_plantilla via tipo_workflow)
     try:
         await generar_borrador_para_caso(
@@ -351,9 +394,23 @@ async def procesar_atencion_cliente(conn, r, em, c_id, b, dt, prov):
             tipo_caso=None,
             email_origen=em['sender'],
             tipo_workflow='ATENCION_CLIENTE',
+            adjuntos_inline=adjuntos_descargados or None,
         )
     except Exception as e:
         logger.warning(f"AC borrador falló para {db_id}: {e}")
+
+    # Upload adjuntos AC a MinIO + INSERT pqrs_adjuntos (best-effort)
+    for adj in adjuntos_descargados:
+        try:
+            path = await upload_to_minio(adj["content_bytes"], f"{db_id}_{adj['nombre_archivo']}", folder=f"casos/{db_id}")
+            if path:
+                await conn.execute(
+                    "INSERT INTO pqrs_adjuntos (caso_id, cliente_id, nombre_archivo, storage_path, content_type, tamano_bytes) "
+                    "VALUES ($1,$2,$3,$4,$5,$6)",
+                    db_id, c_id, adj["nombre_archivo"], path, adj["content_type"], adj["size"],
+                )
+        except Exception as e:
+            logger.warning(f"AC adjunto upload falló: {e}")
 
     # Mark as read (mismo patrón que PQRS)
     try:
@@ -584,7 +641,14 @@ async def master_worker():
                         except Exception as e_acuse:
                             logger.warning(f"Acuse no enviado para {db_id}: {e_acuse}")
 
-                    # Generar borrador con plantilla si existe para el tenant
+                    # Sprint FF F1: descargar adjuntos UNA VEZ ANTES del borrador
+                    # para que Claude los lea como contexto (no doble descarga
+                    # entre extract y upload posterior).
+                    adjuntos_descargados = _download_attachments_inline(em, prov) if em.get('attachments') else []
+                    if adjuntos_descargados:
+                        logger.info(f"📎 {len(adjuntos_descargados)} adjuntos descargados para contexto borrador (caso {db_id})")
+
+                    # Generar borrador con plantilla si existe para el tenant + adjuntos inline
                     caso_radicado = radicado if str(c_id) == TENANT_ABOGADOS_RECOVERY else None
                     await generar_borrador_para_caso(
                         conn, str(c_id), str(db_id),
@@ -594,29 +658,16 @@ async def master_worker():
                         tipo_caso=resultado.tipo.value,
                         radicado=caso_radicado,
                         email_origen=em['sender'],
-                        tipo_workflow='PQRS',  # explícito — flow legal
+                        tipo_workflow='PQRS',
+                        adjuntos_inline=adjuntos_descargados or None,
                     )
 
-                    if em['attachments']:
-                        logger.info(f"📎 Procesando {len(em['attachments'])} adjuntos para caso {db_id}")
-                    for att in em['attachments']:
-                        content = None
-                        a_name, a_type, a_size = "", "", 0
-                        try:
-                            if prov == 'OUTLOOK':
-                                a_name, a_id, a_type, a_size = att['name'], att['id'], att['contentType'], att['size']
-                                content = em['prov_obj'].download_attachment(em['email_buzon'], em['id'], a_id)
-                            elif prov == 'ZOHO':
-                                a_name = att.get('attachmentName', 'unknown')
-                                a_id = att.get('attachmentId', '')
-                                a_type = att.get('contentType', 'application/octet-stream')
-                                a_size = att.get('attachmentSize', 0)
-                                logger.info(f"💾 Descargando adjunto Zoho: '{a_name}' ({int(a_size)/1024:.1f}KB)")
-                                content = em['prov_obj'].download_attachment(em['id'], a_id, folder_id=em.get('folder_id'))
-                        except Exception as dl_err:
-                            logger.error(f"❌ Error descargando adjunto '{a_name}': {dl_err}")
-                            continue
-
+                    # Upload adjuntos a MinIO/SP + INSERT pqrs_adjuntos (con bytes ya en memoria)
+                    for adj in adjuntos_descargados:
+                        a_name = adj["nombre_archivo"]
+                        a_type = adj["content_type"]
+                        a_size = adj["size"]
+                        content = adj["content_bytes"]
                         if content:
                             path = None
                             if sp_engine:
