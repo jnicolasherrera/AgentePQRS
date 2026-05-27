@@ -906,7 +906,7 @@ async def aprobar_lote(
             caso = await conn.fetchrow(
                 "SELECT id, email_origen, email_respuesta_override, asunto, "
                 "cuerpo, borrador_respuesta, documento_peticionante, "
-                "tipo_workflow, fecha_recibido "
+                "tipo_workflow, tipo_caso, problematica_detectada, fecha_recibido "
                 "FROM pqrs_casos WHERE id = $1",
                 uuid.UUID(cid),
             )
@@ -970,6 +970,21 @@ async def aprobar_lote(
                     }),
                 )
                 enviados.append(cid)
+
+                # ─── Sprint FF cierre-de-loop "el modelo aprende" 2026-05-27 ─
+                # Re-ingestion al KB: indexar la respuesta enviada como
+                # `caso_enviado` para que futuros casos similares la retrieven.
+                # Best-effort (si Voyage falla, log + sigue).
+                try:
+                    from app.services.rag_engine import aprender_de_envio
+                    await aprender_de_envio(
+                        conn, caso["id"], current_user.tenant_uuid,
+                        caso["asunto"], caso["borrador_respuesta"],
+                        tipo_caso=caso.get("tipo_caso"),
+                        problematica=caso.get("problematica_detectada"),
+                    )
+                except Exception as kb_err:
+                    logger.warning(f"aprender_de_envio falló caso {cid}: {kb_err}")
 
                 # ─── Sprint FF bloque 6: archivado SharePoint ──────────
                 # Solo para tipo_workflow='PQRS' (decisión D2). Best-effort

@@ -14,6 +14,7 @@ from app.services.rag_engine import (
     DEFAULT_THRESHOLD,
     DEFAULT_TOP_K,
     _construir_query,
+    aprender_de_envio,
     buscar_docs_similares,
     formatear_contexto_para_prompt,
 )
@@ -251,3 +252,130 @@ class TestFormatearContexto:
         texto = formatear_contexto_para_prompt(docs)
         assert "## PLANTILLAS DE REFERENCIA" in texto
         assert "## NORMATIVA APLICABLE" not in texto
+
+
+# --------------------------------------------------------------------------- #
+# aprender_de_envio — cierre-de-loop "el modelo aprende" (Sprint FF 2026-05-27)
+# --------------------------------------------------------------------------- #
+
+class TestAprenderDeEnvio:
+    """Re-ingestion al KB de cada respuesta enviada como `caso_enviado`.
+
+    Funciona en modo best-effort: nunca debe levantar excepción, solo devolver
+    True/False según si pudo indexar.
+    """
+
+    CASO_ID = "abcdef12-3456-7890-abcd-ef0123456789"
+
+    @pytest.mark.asyncio
+    async def test_happy_path_inserta_y_devuelve_true(self, monkeypatch):
+        """Texto válido → llama embed_texts → UPSERT a respuestas_kb → True."""
+        engine = _fake_engine([[0.2] * 1024])
+        # aprender_de_envio importa EmbeddingEngine dinámicamente dentro
+        # del try, así que el monkeypatch va al módulo embedding_engine.
+        monkeypatch.setattr(
+            "app.services.embedding_engine.EmbeddingEngine",
+            lambda: engine,
+        )
+        conn = MagicMock()
+        conn.execute = AsyncMock(return_value="INSERT 0 1")
+
+        ok = await aprender_de_envio(
+            conn, self.CASO_ID, TENANT,
+            asunto="Re: Solicitud paz y salvo",
+            texto_enviado="Cordial saludo. Adjuntamos el paz y salvo solicitado. " * 5,
+            tipo_caso="PETICION",
+            problematica="paz_y_salvo",
+        )
+
+        assert ok is True
+        engine.embed_texts.assert_awaited_once()
+        # Verifica que el contenido embebido incluye el asunto + respuesta
+        call_args = engine.embed_texts.call_args
+        contenido = call_args.args[0][0]
+        assert "ASUNTO: Re: Solicitud paz y salvo" in contenido
+        assert "RESPUESTA:" in contenido
+        # Verifica que el INSERT recibió source_type='caso_enviado'
+        conn.execute.assert_awaited_once()
+        sql = conn.execute.call_args.args[0]
+        assert "caso_enviado" in sql
+        assert "ON CONFLICT" in sql
+
+    @pytest.mark.asyncio
+    async def test_texto_muy_corto_skipea(self):
+        """Texto < 50 chars no aporta al KB → no llama embed ni DB."""
+        conn = MagicMock()
+        conn.execute = AsyncMock()
+        ok = await aprender_de_envio(
+            conn, self.CASO_ID, TENANT,
+            asunto="x", texto_enviado="muy corto",
+        )
+        assert ok is False
+        conn.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_texto_vacio_skipea(self):
+        conn = MagicMock()
+        conn.execute = AsyncMock()
+        ok = await aprender_de_envio(conn, self.CASO_ID, TENANT, "asunto", "")
+        assert ok is False
+        conn.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_voyage_falla_degrada_a_false(self, monkeypatch):
+        """Si EmbeddingEngine levanta → log warn + return False, no rompe."""
+        engine = _fake_engine_falla(RuntimeError("voyage down"))
+        # aprender_de_envio importa EmbeddingEngine dinámicamente dentro
+        # del try, así que el monkeypatch va al módulo embedding_engine.
+        monkeypatch.setattr(
+            "app.services.embedding_engine.EmbeddingEngine",
+            lambda: engine,
+        )
+        conn = MagicMock()
+        conn.execute = AsyncMock()
+        ok = await aprender_de_envio(
+            conn, self.CASO_ID, TENANT,
+            asunto="x",
+            texto_enviado="Respuesta válida con muchos caracteres para superar el mínimo.",
+        )
+        assert ok is False
+        conn.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_db_falla_degrada_a_false(self, monkeypatch):
+        """Si la DB rechaza el INSERT → log warn + return False, no rompe."""
+        engine = _fake_engine([[0.2] * 1024])
+        # aprender_de_envio importa EmbeddingEngine dinámicamente dentro
+        # del try, así que el monkeypatch va al módulo embedding_engine.
+        monkeypatch.setattr(
+            "app.services.embedding_engine.EmbeddingEngine",
+            lambda: engine,
+        )
+        conn = MagicMock()
+        conn.execute = AsyncMock(side_effect=RuntimeError("pg conflict"))
+        ok = await aprender_de_envio(
+            conn, self.CASO_ID, TENANT,
+            asunto="x",
+            texto_enviado="Respuesta válida con muchos caracteres para superar el mínimo.",
+        )
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_embedding_vacio_devuelve_false(self, monkeypatch):
+        """Si Voyage devuelve vectors=[] → log warn + return False."""
+        engine = _fake_engine([])
+        # aprender_de_envio importa EmbeddingEngine dinámicamente dentro
+        # del try, así que el monkeypatch va al módulo embedding_engine.
+        monkeypatch.setattr(
+            "app.services.embedding_engine.EmbeddingEngine",
+            lambda: engine,
+        )
+        conn = MagicMock()
+        conn.execute = AsyncMock()
+        ok = await aprender_de_envio(
+            conn, self.CASO_ID, TENANT,
+            asunto="x",
+            texto_enviado="Respuesta válida con muchos caracteres para superar el mínimo.",
+        )
+        assert ok is False
+        conn.execute.assert_not_called()

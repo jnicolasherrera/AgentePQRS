@@ -143,6 +143,70 @@ def _construir_query(asunto: str, cuerpo: str) -> str:
     return a or c
 
 
+async def aprender_de_envio(
+    conn: asyncpg.Connection,
+    caso_id: str,
+    tenant_id: str,
+    asunto: str,
+    texto_enviado: str,
+    tipo_caso: str | None = None,
+    problematica: str | None = None,
+) -> bool:
+    """Indexa al KB la respuesta final que se envió al cliente.
+
+    Sprint FF cierre-de-loop 2026-05-27 ("el modelo aprende"):
+    cada respuesta enviada se vuelve `caso_enviado` en respuestas_kb
+    para que futuros casos similares la retrieven como few-shot.
+
+    UPSERT por (cliente_id, source_type='caso_enviado', source_id=caso_id):
+    si el mismo caso se re-envía después de una edición, se actualiza el
+    embedding. El KB siempre refleja la última versión que se mandó.
+
+    Best-effort: si Voyage falla o la DB rechaza, devuelve False con log
+    warn (NUNCA rompe el flow del envío).
+
+    Returns:
+        True si se indexó, False si falló o se skipeó.
+    """
+    if not texto_enviado or len(texto_enviado) < 50:
+        # Borradores muy cortos no aportan al KB.
+        return False
+    try:
+        from app.services.embedding_engine import EmbeddingEngine
+        engine = EmbeddingEngine()
+        contenido = f"ASUNTO: {asunto or ''}\n\nRESPUESTA:\n{texto_enviado}"
+        result = await engine.embed_texts([contenido], input_type="document")
+        if not result.vectors:
+            logger.warning("aprender_de_envio: embedding vacío para %s", caso_id)
+            return False
+        vec = result.vectors[0]
+        await conn.execute(
+            """INSERT INTO respuestas_kb
+                  (cliente_id, source_type, source_id, problematica, tipo_caso,
+                   contenido, embedding, embedding_model, metadata)
+               VALUES ($1::uuid, 'caso_enviado', $2, $3, $4, $5, $6::vector, $7, $8::jsonb)
+               ON CONFLICT (cliente_id, source_type, source_id) DO UPDATE SET
+                 contenido       = EXCLUDED.contenido,
+                 embedding       = EXCLUDED.embedding,
+                 embedding_model = EXCLUDED.embedding_model,
+                 problematica    = EXCLUDED.problematica,
+                 tipo_caso       = EXCLUDED.tipo_caso,
+                 metadata        = EXCLUDED.metadata,
+                 updated_at      = CURRENT_TIMESTAMP""",
+            tenant_id, str(caso_id), problematica, tipo_caso, contenido,
+            str(vec), result.model,
+            '{"learned_from_envio": true}',
+        )
+        logger.info(
+            "aprender_de_envio: caso=%s tokens=%d → KB updated",
+            str(caso_id)[:8], result.total_tokens,
+        )
+        return True
+    except Exception as e:
+        logger.warning("aprender_de_envio falló para %s: %s", caso_id, e)
+        return False
+
+
 def formatear_contexto_para_prompt(docs: list[dict[str, Any]]) -> str:
     """Convierte los docs recuperados en un bloque legible para inyectar al
     user prompt de Claude. Separa por origen para que el modelo entienda qué
