@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle, Clock, Inbox, ArrowRight, Scale,
@@ -18,7 +18,7 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { formatNumber as nf, formatDateShort as fmtFecha } from "@/lib/format";
 import { PERIODOS, TIPO_COLOR_HEX, type Periodo } from "@/lib/casos-constants";
-import { WORKFLOWS } from "@/lib/workflow-constants";
+import { WORKFLOWS, WORKFLOW_FILTER_ITEMS, workflowParam, type WorkflowFilter } from "@/lib/workflow-constants";
 import { getProblematicaMeta } from "@/lib/problematica-constants";
 
 export function DashboardMetrics({
@@ -26,10 +26,23 @@ export function DashboardMetrics({
 }: { selectedClienteId?: string; onVerTodos?: () => void }) {
   const { user } = useAuthStore();
   const [periodo, setPeriodo] = useState<Periodo>("semana");
-  const { stats, loading } = useDashboardStats(selectedClienteId, periodo);
-  const isAdmin = user?.rol === "admin" || user?.rol === "super_admin";
-  const { data: tendencia } = useTendencia(periodo, selectedClienteId, isAdmin);
+  // Sprint FF bloque 12: filtro pill workflow [Todo|PQRS|AC]. Solo visible si tieneAC.
+  // Default "all" para mostrar agregado al entrar (Recovery/Demo siempre quedan en "all").
+  const [workflowFilter, setWorkflowFilter] = useState<WorkflowFilter>("all");
   const { tieneAC } = useTenantWorkflows();
+  const wfParam = workflowParam(workflowFilter);
+  const { stats, loading } = useDashboardStats(selectedClienteId, periodo, wfParam);
+  const isAdmin = user?.rol === "admin" || user?.rol === "super_admin";
+  const { data: tendencia } = useTendencia(periodo, selectedClienteId, isAdmin, wfParam);
+
+  // Modos derivados para condicionar UI
+  const isModoAC    = workflowFilter === "ATENCION_CLIENTE";
+  const isModoPQRS  = workflowFilter === "PQRS";
+
+  // Si el tenant pierde AC mid-session (raro), normalizamos a "all".
+  useEffect(() => {
+    if (!tieneAC && workflowFilter !== "all") setWorkflowFilter("all");
+  }, [tieneAC, workflowFilter]);
 
   // Etiqueta humana del período actual (para títulos dinámicos)
   const periodoLabel = periodo === "dia" ? "hoy" : periodo === "semana" ? "últimos 7 días" : "últimos 30 días";
@@ -74,23 +87,45 @@ export function DashboardMetrics({
   return (
     <div className="space-y-6 pb-10">
 
-      {/* ===== SELECTOR DE PERÍODO ===== */}
-      <div className="agente items-center justify-between gap-4">
+      {/* ===== SELECTOR DE PERÍODO + (sprint FF) FILTRO WORKFLOW ===== */}
+      <div className="agente items-center justify-between gap-4 agente-wrap">
         <p className="text-sm text-muted-foreground">
           Operación al <span className="text-foreground font-semibold">{new Date().toLocaleDateString("es-CO", { day: "numeric", month: "long" })}</span>
+          {isModoAC && <span className="ml-2 text-xs text-primary font-semibold">· solo Atención al Cliente</span>}
+          {isModoPQRS && <span className="ml-2 text-xs text-red-600 font-semibold">· solo PQRS</span>}
         </p>
-        <div className="agente items-center gap-1 bg-muted rounded-xl p-1 border border-border">
-          {PERIODOS.map(p => (
-            <button key={p.key} onClick={() => setPeriodo(p.key)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                periodo === p.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-              }`}>{p.label}</button>
-          ))}
+        <div className="agente items-center gap-2 agente-wrap">
+          {/* Filtro workflow: solo visible si el tenant tiene AC (sprint FF bloque 12) */}
+          {tieneAC && (
+            <div className="agente items-center gap-1 bg-muted rounded-xl p-1 border border-border">
+              {WORKFLOW_FILTER_ITEMS.slice().reverse().map(it => {
+                const active = workflowFilter === it.key;
+                return (
+                  <button
+                    key={it.key}
+                    onClick={() => setWorkflowFilter(it.key)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >{it.label}</button>
+                );
+              })}
+            </div>
+          )}
+          <div className="agente items-center gap-1 bg-muted rounded-xl p-1 border border-border">
+            {PERIODOS.map(p => (
+              <button key={p.key} onClick={() => setPeriodo(p.key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  periodo === p.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                }`}>{p.label}</button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* ===== INGRESOS DEL CORREO — PQR vs TUTELA (período dinámico) ===== */}
-      {ingresos && (
+      {/* ===== INGRESOS DEL CORREO — PQR vs TUTELA (período dinámico) =====
+           Sprint FF bloque 12: oculto en modo AC (los AC no tienen tipo_caso PQR ni TUTELA). */}
+      {ingresos && !isModoAC && (
         <div>
           <SectionLabel icon={<Inbox className="w-3.5 h-3.5 text-primary" />}>
             Lo que entró al correo · {periodoLabel}
@@ -141,8 +176,9 @@ export function DashboardMetrics({
         </div>
       )}
 
-      {/* ===== PULSO DE TUTELAS + ESCALADAS DE PQR PREVIO (calidad de servicio) ===== */}
-      {pulsoTutelas && (
+      {/* ===== PULSO DE TUTELAS + ESCALADAS DE PQR PREVIO (calidad de servicio) =====
+           Sprint FF bloque 12: oculto en modo AC (las tutelas son legales, no aplican). */}
+      {pulsoTutelas && !isModoAC && (
         <div>
           <SectionLabel icon={<Scale className="w-3.5 h-3.5 text-red-600" />}>
             Pulso de tutelas — SLA legal 10 días
@@ -224,11 +260,13 @@ export function DashboardMetrics({
         </div>
       </div>
 
-      {/* ===== ENTRADA DE CASOS  +  COMPOSICIÓN ===== */}
+      {/* ===== ENTRADA DE CASOS  +  COMPOSICIÓN =====
+           Sprint FF bloque 12: en modo AC ocultamos "Composición por tipo" (los AC
+           tienen tipo_caso=NULL); la tendencia se expande a todo el ancho. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
         {/* Tendencia de ingresos */}
-        <div className="lg:col-span-2 glass-panel rounded-3xl p-6">
+        <div className={`${isModoAC ? "lg:col-span-3" : "lg:col-span-2"} glass-panel rounded-3xl p-6`}>
           <div className="agente items-start justify-between mb-4">
             <div>
               <SectionLabel icon={<TrendingUp className="w-3.5 h-3.5 text-primary" />}>Entrada de casos</SectionLabel>
@@ -281,7 +319,8 @@ export function DashboardMetrics({
           </div>
         </div>
 
-        {/* Composición por tipo */}
+        {/* Composición por tipo (oculta en modo AC: tipo_caso es NULL en AC) */}
+        {!isModoAC && (
         <div className="glass-panel rounded-3xl p-6 agente agente-col">
           <SectionLabel icon={<Layers className="w-3.5 h-3.5 text-primary" />}>Composición por tipo</SectionLabel>
           <div className="space-y-3 agente-1">
@@ -312,6 +351,7 @@ export function DashboardMetrics({
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* ===== TRAZABILIDAD ===== */}
@@ -401,8 +441,9 @@ export function DashboardMetrics({
 
       {/* ===== Sprint FF bloque 11: SECCIÓN ATENCIÓN AL CLIENTE =====
            Solo visible si el tenant tiene workflow AC + el backend devuelve breakdown.
-           Para Recovery/Demo: cero render (workflow_breakdown vendrá null). */}
-      {tieneAC && stats.workflow_breakdown && (() => {
+           Para Recovery/Demo: cero render (workflow_breakdown vendrá null).
+           Sprint FF bloque 12: oculto en modo PQRS (el donut es redundante con el filtro). */}
+      {tieneAC && !isModoPQRS && stats.workflow_breakdown && (() => {
         const wb = stats.workflow_breakdown;
         const totalWf = wb.pqrs_count + wb.ac_count;
         const donutData = [
