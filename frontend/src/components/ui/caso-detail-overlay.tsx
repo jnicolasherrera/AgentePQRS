@@ -1,9 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Clock, Save, Send, ShieldAlert, Mail, MessageSquare, Download, CheckCircle, BrainCircuit, XCircle, UserCheck, Scale, Link2, Search, Plus } from "lucide-react";
+import { X, Clock, Save, Send, ShieldAlert, Mail, MessageSquare, Download, CheckCircle, BrainCircuit, XCircle, UserCheck, Scale, Link2, Search, Plus, Edit3, FolderOpen, AlertTriangle, FileText, ChevronDown } from "lucide-react";
 import { api, useAuthStore } from "@/store/authStore";
+import { usePlantillas } from "@/hooks/usePlantillas";
+import { getProblematicaMeta } from "@/lib/problematica-constants";
+import type { Plantilla } from "@/types/api";
+
+// Regex email moderado (espejo del backend RFC 5322 light)
+const EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 
 interface CasoDetailOverlayProps {
   casoId: string | null;
@@ -35,6 +41,30 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
   const [vincularQuery, setVincularQuery] = useState("");
   const [vincularResults, setVincularResults] = useState<any[]>([]);
   const [vincularLoading, setVincularLoading] = useState(false);
+
+  // Sprint FF bloque 10: editor de destinatario (admin only)
+  const [destOpen, setDestOpen] = useState(false);
+  const [destValue, setDestValue] = useState("");
+  const [destSaving, setDestSaving] = useState(false);
+  const [destError, setDestError] = useState<string | null>(null);
+
+  // Sprint FF bloque 10: plantillas (solo workflow AC + admin)
+  const esAC = data?.tipo_workflow === "ATENCION_CLIENTE";
+  const { plantillas } = usePlantillas("ATENCION_CLIENTE", esAC && isAdmin);
+  const [plantillasOpen, setPlantillasOpen] = useState(false);
+  const [aplicandoPlantillaId, setAplicandoPlantillaId] = useState<string | null>(null);
+
+  // Plantillas agrupadas por categoría visual (paz_y_salvo, comprobante, ...)
+  const plantillasPorCategoria = useMemo(() => {
+    const groups = new Map<string, { label: string; items: Plantilla[] }>();
+    for (const p of plantillas) {
+      const meta = getProblematicaMeta(p.problematica);
+      const g = groups.get(meta.categoria);
+      if (g) g.items.push(p);
+      else groups.set(meta.categoria, { label: meta.label.split(" ").slice(0, 2).join(" "), items: [p] });
+    }
+    return Array.from(groups.entries()).map(([key, v]) => ({ key, ...v }));
+  }, [plantillas]);
 
   useEffect(() => {
     if (canReassign) {
@@ -234,6 +264,60 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
     } catch (e) { console.error(e); }
   };
 
+  // Sprint FF bloque 10: PATCH destinatario (admin only)
+  const openDestEditor = () => {
+    if (!data) return;
+    setDestValue(data.email_respuesta_override || "");
+    setDestError(null);
+    setDestOpen(true);
+  };
+  const handleSaveDestinatario = async () => {
+    if (!data?.id) return;
+    const raw = destValue.trim();
+    // Validación cliente: vacío = quitar override; no vacío = debe matchear regex
+    if (raw && !EMAIL_RE.test(raw)) {
+      setDestError("Email inválido");
+      return;
+    }
+    setDestSaving(true); setDestError(null);
+    try {
+      const res = await api.patch(`/casos/${data.id}/destinatario`, { email: raw || null });
+      // Actualización optimista local + refetch para traer el audit
+      setData((prev: any) => prev ? {
+        ...prev,
+        email_respuesta_override: raw || null,
+        email_destinatario_efectivo: res.data.email_destinatario_efectivo,
+      } : prev);
+      setDestOpen(false);
+      await refetchCaso();
+    } catch (e: any) {
+      setDestError(e?.response?.data?.detail || "Error al guardar");
+    } finally {
+      setDestSaving(false);
+    }
+  };
+
+  // Sprint FF bloque 10: aplicar plantilla al borrador (admin AC)
+  const handleAplicarPlantilla = async (plantillaId: string) => {
+    if (!data?.id) return;
+    setAplicandoPlantillaId(plantillaId);
+    try {
+      const res = await api.post(`/casos/${data.id}/aplicar-plantilla`, { plantilla_id: plantillaId });
+      setDraftText(res.data.borrador_respuesta);
+      lastSavedTextRef.current = res.data.borrador_respuesta;
+      setData((prev: any) => prev ? {
+        ...prev,
+        borrador_respuesta: res.data.borrador_respuesta,
+        borrador_estado: res.data.borrador_estado,
+      } : prev);
+      setPlantillasOpen(false);
+    } catch (e) {
+      console.error("Error aplicando plantilla:", e);
+    } finally {
+      setAplicandoPlantillaId(null);
+    }
+  };
+
   const handleDownloadFile = async (adjuntoId: string, nombre: string) => {
     try {
       const res = await api.get(`/casos/${data.id}/adjuntos/${adjuntoId}/download`, { responseType: "blob" });
@@ -374,13 +458,121 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
 
                   <div className="agente-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
                     <div>
+                      {/* Sprint FF bloque 10: tag problemática prominente (solo AC).
+                          Lo mostramos arriba del asunto como eyebrow para que el admin
+                          vea de un vistazo qué tipo de consulta es (ej. "Paz y salvo"). */}
+                      {esAC && data.problematica_detectada && (() => {
+                        const meta = getProblematicaMeta(data.problematica_detectada);
+                        return (
+                          <div className={`inline-flex items-center gap-1.5 mb-2 px-2.5 py-1 rounded-lg border text-[11px] font-bold ${meta.badgeTw}`}>
+                            <MessageSquare className="w-3 h-3" />
+                            {meta.label}
+                          </div>
+                        );
+                      })()}
                       <p className="text-sm font-bold text-foreground">{data.asunto}</p>
-                      <p className="text-xs text-muted-foreground agente items-center gap-1.5 mt-1">
-                        <Mail className="w-3.5 h-3.5" /> De: {data.email_origen}
-                      </p>
+
+                      {/* Email origen + destinatario efectivo (con override) */}
+                      <div className="mt-1.5 space-y-1">
+                        <p className="text-xs text-muted-foreground agente items-center gap-1.5">
+                          <Mail className="w-3.5 h-3.5" /> De: <span className="text-foreground/80">{data.email_origen}</span>
+                        </p>
+
+                        {/* Destinatario que se usará al responder. Si admin editó override,
+                            mostramos el override + badge "override por X el Y". */}
+                        {(data.email_respuesta_override || isAdmin) && (
+                          <div className="relative">
+                            <div className="agente items-center gap-1.5 text-xs">
+                              <Send className="w-3.5 h-3.5 text-muted-foreground" />
+                              <span className="text-muted-foreground">Responder a:</span>
+                              <span className={`font-medium ${data.email_respuesta_override ? "text-amber-700" : "text-foreground/80"}`}>
+                                {data.email_destinatario_efectivo || data.email_origen}
+                              </span>
+                              {isAdmin && (
+                                <button
+                                  onClick={openDestEditor}
+                                  title="Editar destinatario"
+                                  className="ml-1 p-1 rounded hover:bg-muted text-muted-foreground hover:text-primary transition-colors"
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Badge audit del último override */}
+                            {data.destinatario_override_audit && data.email_respuesta_override && (
+                              <p className="text-[10px] text-amber-600/80 italic mt-0.5 ml-5">
+                                override por {data.destinatario_override_audit.usuario_nombre || "—"} el {new Date(data.destinatario_override_audit.fecha).toLocaleDateString("es-CO")}
+                              </p>
+                            )}
+
+                            {/* Mini-modal (popover) en la misma posición */}
+                            {destOpen && (
+                              <div className="absolute z-30 top-full mt-2 left-0 w-[320px] p-4 rounded-xl bg-card border border-border shadow-lg">
+                                <p className="text-xs font-bold text-foreground mb-2">Editar destinatario</p>
+                                <p className="text-[10px] text-muted-foreground mb-3">
+                                  Dejá vacío para volver al email original ({data.email_origen}).
+                                </p>
+                                <input
+                                  type="email"
+                                  value={destValue}
+                                  onChange={e => { setDestValue(e.target.value); setDestError(null); }}
+                                  placeholder="nuevomail@cliente.com"
+                                  className="w-full px-3 py-2 bg-muted border border-border rounded-lg text-sm text-foreground outline-none focus:border-primary"
+                                />
+                                {destError && (
+                                  <p className="text-[11px] text-red-600 mt-1">{destError}</p>
+                                )}
+                                <div className="agente items-center justify-end gap-2 mt-3">
+                                  <button
+                                    onClick={() => setDestOpen(false)}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-muted-foreground hover:text-foreground"
+                                  >Cancelar</button>
+                                  <button
+                                    onClick={handleSaveDestinatario}
+                                    disabled={destSaving}
+                                    className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-bold disabled:opacity-50"
+                                  >{destSaving ? "Guardando..." : "Guardar"}</button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
                       <p className="text-xs text-muted-foreground agente items-center gap-1.5 mt-1">
                         <Clock className="w-3.5 h-3.5" /> {new Date(data.fecha).toLocaleString()}
                       </p>
+
+                      {/* Sprint FF bloque 10: badge SharePoint. Solo PQRS (AC no se archiva).
+                          Si fue enviado y se archivó → verde con link. Si fue enviado y NO se
+                          archivó → amarillo (típico: falta cédula). Antes de enviar → silencio. */}
+                      {(data.tipo_workflow ?? "PQRS") === "PQRS" && (() => {
+                        const enviado = ["CONTESTADO", "CERRADO"].includes(data.estado);
+                        if (data.sp_archivo) {
+                          return (
+                            <a
+                              href={data.sp_archivo}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 text-[11px] font-semibold hover:bg-emerald-500/20 transition-colors"
+                              title={data.sp_archivo}
+                            >
+                              <FolderOpen className="w-3.5 h-3.5" />
+                              Archivado en SharePoint
+                            </a>
+                          );
+                        }
+                        if (enviado) {
+                          return (
+                            <div className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-700 text-[11px] font-semibold">
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                              No archivado en SP — {data.documento_peticionante ? "verificar" : "falta cédula"}
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
                     </div>
 
                     <div className="border-t border-border pt-4">
@@ -529,17 +721,77 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
                         </span>
                       )}
                     </div>
-                    {hasDraft && (
-                      <button
-                        onClick={handleGenerate}
-                        disabled={loadingDraft}
-                        className="agente items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg border border-blue-500/20 transition-all disabled:opacity-50"
-                      >
-                        {loadingDraft ? <div className="w-3 h-3 rounded-full border-2 border-blue-400/50 border-t-blue-400 animate-spin" /> : <BrainCircuit className="w-3.5 h-3.5" />}
-                        Regenerar
-                      </button>
-                    )}
+                    <div className="agente items-center gap-2">
+                      {/* Sprint FF bloque 10: botón Plantillas (solo AC + admin con plantillas cargadas) */}
+                      {esAC && isAdmin && plantillas.length > 0 && (
+                        <button
+                          onClick={() => setPlantillasOpen(o => !o)}
+                          className={`agente items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${
+                            plantillasOpen
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "text-primary bg-primary/10 hover:bg-primary/20 border-primary/20"
+                          }`}
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          Plantillas ({plantillas.length})
+                          <ChevronDown className={`w-3 h-3 transition-transform ${plantillasOpen ? "rotate-180" : ""}`} />
+                        </button>
+                      )}
+                      {hasDraft && (
+                        <button
+                          onClick={handleGenerate}
+                          disabled={loadingDraft}
+                          className="agente items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg border border-blue-500/20 transition-all disabled:opacity-50"
+                        >
+                          {loadingDraft ? <div className="w-3 h-3 rounded-full border-2 border-blue-400/50 border-t-blue-400 animate-spin" /> : <BrainCircuit className="w-3.5 h-3.5" />}
+                          Regenerar
+                        </button>
+                      )}
+                    </div>
                   </div>
+
+                  {/* Sprint FF bloque 10: panel plantillas (collapsible). Agrupado por categoría visual. */}
+                  <AnimatePresence>
+                    {plantillasOpen && esAC && isAdmin && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.18 }}
+                        className="border-b border-border bg-card overflow-hidden shrink-0"
+                      >
+                        <div className="px-6 py-4 max-h-[320px] overflow-y-auto custom-scrollbar">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
+                            Aplicar una plantilla — sobrescribe el borrador con el texto rendereado
+                          </p>
+                          <div className="space-y-4">
+                            {plantillasPorCategoria.map(cat => (
+                              <div key={cat.key}>
+                                <p className="text-[10px] font-bold text-muted-foreground/70 uppercase tracking-wider mb-1.5">{cat.label}</p>
+                                <div className="agente agente-wrap gap-1.5">
+                                  {cat.items.map(p => {
+                                    const meta = getProblematicaMeta(p.problematica);
+                                    const aplicando = aplicandoPlantillaId === p.id;
+                                    return (
+                                      <button
+                                        key={p.id}
+                                        onClick={() => handleAplicarPlantilla(p.id)}
+                                        disabled={aplicando}
+                                        title={p.contexto || p.problematica}
+                                        className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-all hover:scale-[1.02] disabled:opacity-50 ${meta.badgeTw}`}
+                                      >
+                                        {aplicando ? "..." : p.problematica}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
                   <div className="agente-1 overflow-y-auto p-6 space-y-4 custom-scrollbar agente agente-col">
                     {!hasDraft ? (

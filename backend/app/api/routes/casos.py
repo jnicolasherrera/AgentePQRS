@@ -157,32 +157,42 @@ router = APIRouter()
 
 @router.get("/borrador/pendientes")
 async def listar_pendientes(
+    workflow: Optional[str] = None,  # PQRS | ATENCION_CLIENTE | None=ambos (sprint FF bloque 7)
     current_user: UserInToken = Depends(get_current_user),
     conn=Depends(get_db_connection),
 ) -> List[Dict[str, Any]]:
+    if workflow is not None and workflow not in ("PQRS", "ATENCION_CLIENTE"):
+        raise HTTPException(status_code=400, detail="workflow inválido")
+
     # SEC-2026-05-21: scope por tenant (super_admin ve todos). Antes devolvía
     # borradores pendientes de TODOS los tenants (leak C1).
-    if current_user.role == "super_admin":
-        rows = await conn.fetch(
-            """SELECT id, email_origen, asunto, tipo_caso, nivel_prioridad,
-                      fecha_recibido, borrador_respuesta, problematica_detectada
-               FROM pqrs_casos WHERE borrador_estado = 'PENDIENTE'
-               ORDER BY fecha_recibido ASC LIMIT 100""",
-        )
-    else:
-        rows = await conn.fetch(
-            """SELECT id, email_origen, asunto, tipo_caso, nivel_prioridad,
-                      fecha_recibido, borrador_respuesta, problematica_detectada
-               FROM pqrs_casos WHERE borrador_estado = 'PENDIENTE' AND cliente_id = $1
-               ORDER BY fecha_recibido ASC LIMIT 100""",
-            uuid.UUID(current_user.tenant_uuid),
-        )
+    filtros = ["borrador_estado = 'PENDIENTE'"]
+    params: list = []
+    idx = 1
+    if current_user.role != "super_admin":
+        filtros.append(f"cliente_id = ${idx}::uuid")
+        params.append(uuid.UUID(current_user.tenant_uuid))
+        idx += 1
+    if workflow:
+        filtros.append(f"tipo_workflow = ${idx}")
+        params.append(workflow)
+        idx += 1
+
+    rows = await conn.fetch(
+        f"""SELECT id, email_origen, asunto, tipo_caso, nivel_prioridad,
+                   fecha_recibido, borrador_respuesta, problematica_detectada,
+                   tipo_workflow
+            FROM pqrs_casos WHERE {" AND ".join(filtros)}
+            ORDER BY fecha_recibido ASC LIMIT 100""",
+        *params,
+    )
     return [
         {
             "id": str(r["id"]),
             "email_origen": r["email_origen"],
             "asunto": r["asunto"],
             "tipo": r["tipo_caso"],
+            "tipo_workflow": r["tipo_workflow"],
             "prioridad": r["nivel_prioridad"],
             "fecha": r["fecha_recibido"].isoformat() if r["fecha_recibido"] else None,
             "borrador_respuesta": r["borrador_respuesta"],
@@ -195,6 +205,7 @@ async def listar_pendientes(
 @router.get("/enviados/historial")
 async def historial_enviados(
     cliente_id: Optional[str] = None,
+    workflow: Optional[str] = None,  # PQRS | ATENCION_CLIENTE | None=ambos (sprint FF bloque 7)
     current_user: UserInToken = Depends(get_current_user),
     conn=Depends(get_db_connection),
 ) -> List[Dict[str, Any]]:
@@ -203,48 +214,42 @@ async def historial_enviados(
 
     if current_user.role not in ROLES_PERMITIDOS:
         raise HTTPException(status_code=403, detail="Acceso denegado")
+    if workflow is not None and workflow not in ("PQRS", "ATENCION_CLIENTE"):
+        raise HTTPException(status_code=400, detail="workflow inválido")
 
     es_super = current_user.role == "super_admin"
 
-    if es_super and not cliente_id:
-        rows = await conn.fetch(
-            """SELECT a.id, a.caso_id, a.lote_id, a.created_at,
-                      u.nombre AS abogado_nombre,
-                      c.email_origen, c.asunto, c.tipo_caso, c.nivel_prioridad
-               FROM audit_log_respuestas a
-               JOIN usuarios u ON u.id = a.usuario_id
-               JOIN pqrs_casos c ON c.id = a.caso_id
-               WHERE a.accion = 'ENVIADO_LOTE'
-               ORDER BY a.created_at DESC LIMIT 500""",
-        )
-    else:
+    # Query unificada con filtros dinámicos (refactor sprint FF bloque 7)
+    filtros = ["a.accion = 'ENVIADO_LOTE'"]
+    params: list = []
+    idx = 1
+
+    if not (es_super and not cliente_id):
         tid = uuid.UUID(cliente_id) if (es_super and cliente_id) else uuid.UUID(current_user.tenant_uuid)
-        if current_user.role in ROLES_VEN_TODO:
-            rows = await conn.fetch(
-                """SELECT a.id, a.caso_id, a.lote_id, a.created_at,
-                          u.nombre AS abogado_nombre,
-                          c.email_origen, c.asunto, c.tipo_caso, c.nivel_prioridad
-                   FROM audit_log_respuestas a
-                   JOIN usuarios u ON u.id = a.usuario_id
-                   JOIN pqrs_casos c ON c.id = a.caso_id
-                   WHERE a.accion = 'ENVIADO_LOTE' AND c.cliente_id = $1
-                   ORDER BY a.created_at DESC LIMIT 500""",
-                tid,
-            )
-        else:
-            # analista / abogado: solo sus propios envíos
-            rows = await conn.fetch(
-                """SELECT a.id, a.caso_id, a.lote_id, a.created_at,
-                          u.nombre AS abogado_nombre,
-                          c.email_origen, c.asunto, c.tipo_caso, c.nivel_prioridad
-                   FROM audit_log_respuestas a
-                   JOIN usuarios u ON u.id = a.usuario_id
-                   JOIN pqrs_casos c ON c.id = a.caso_id
-                   WHERE a.accion = 'ENVIADO_LOTE' AND c.cliente_id = $1
-                         AND a.usuario_id = $2
-                   ORDER BY a.created_at DESC LIMIT 500""",
-                tid, uuid.UUID(current_user.usuario_id),
-            )
+        filtros.append(f"c.cliente_id = ${idx}::uuid")
+        params.append(tid)
+        idx += 1
+        if current_user.role not in ROLES_VEN_TODO:
+            filtros.append(f"a.usuario_id = ${idx}::uuid")
+            params.append(uuid.UUID(current_user.usuario_id))
+            idx += 1
+    if workflow:
+        filtros.append(f"c.tipo_workflow = ${idx}")
+        params.append(workflow)
+        idx += 1
+
+    rows = await conn.fetch(
+        f"""SELECT a.id, a.caso_id, a.lote_id, a.created_at,
+                   u.nombre AS abogado_nombre,
+                   c.email_origen, c.asunto, c.tipo_caso, c.nivel_prioridad,
+                   c.tipo_workflow
+            FROM audit_log_respuestas a
+            JOIN usuarios u ON u.id = a.usuario_id
+            JOIN pqrs_casos c ON c.id = a.caso_id
+            WHERE {" AND ".join(filtros)}
+            ORDER BY a.created_at DESC LIMIT 500""",
+        *params,
+    )
     return [
         {
             "id": str(r["id"]),
@@ -255,6 +260,7 @@ async def historial_enviados(
             "email_destino": r["email_origen"],
             "asunto": r["asunto"],
             "tipo": r["tipo_caso"],
+            "tipo_workflow": r["tipo_workflow"],
             "prioridad": r["nivel_prioridad"],
         }
         for r in rows
@@ -309,7 +315,9 @@ async def get_caso_detalle(
         """SELECT c.id, c.cliente_id, c.email_origen, c.asunto, c.cuerpo, c.estado, c.nivel_prioridad,
                   c.fecha_recibido, c.tipo_caso, c.fecha_vencimiento,
                   c.borrador_respuesta, c.borrador_estado, c.problematica_detectada,
-                  c.asignado_a, u.nombre AS asignado_nombre, c.pqr_origenes
+                  c.asignado_a, u.nombre AS asignado_nombre, c.pqr_origenes,
+                  c.tipo_workflow, c.email_respuesta_override, c.documento_peticionante,
+                  c.metadata_especifica
            FROM pqrs_casos c
            LEFT JOIN usuarios u ON u.id = c.asignado_a
            WHERE c.id = $1 AND ($2 OR c.cliente_id = $3)""",
@@ -362,14 +370,58 @@ async def get_caso_detalle(
         for r in comentarios_rows
     ] or [{"id": "init", "texto": "Caso ingresado y clasificado en Triaje automático.",
             "autor": "Sistema AI", "fecha": caso["fecha_recibido"].isoformat(), "es_sistema": True}]
+
+    # Sprint FF bloque 7: último cambio de destinatario (si lo hubo) para badge en UI.
+    destinatario_audit_row = await conn.fetchrow(
+        """SELECT a.created_at, a.metadata, u.nombre AS usuario_nombre
+           FROM audit_log_respuestas a
+           LEFT JOIN usuarios u ON u.id = a.usuario_id
+           WHERE a.caso_id = $1 AND a.accion = 'DESTINATARIO_EDITADO'
+           ORDER BY a.created_at DESC LIMIT 1""",
+        uuid.UUID(caso_id),
+    )
+    destinatario_audit = None
+    if destinatario_audit_row:
+        meta = destinatario_audit_row["metadata"] or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except (ValueError, TypeError):
+                meta = {}
+        destinatario_audit = {
+            "fecha": destinatario_audit_row["created_at"].isoformat(),
+            "usuario_nombre": destinatario_audit_row["usuario_nombre"],
+            "anterior": meta.get("anterior"),
+            "nuevo": meta.get("nuevo"),
+            "tipo_cambio": meta.get("tipo_cambio"),
+        }
+
+    # Sprint FF bloque 6: path SP archivado (si el caso PQRS quedó archivado).
+    metadata_especifica = caso["metadata_especifica"] or {}
+    if isinstance(metadata_especifica, str):
+        try:
+            metadata_especifica = json.loads(metadata_especifica)
+        except (ValueError, TypeError):
+            metadata_especifica = {}
+    sp_archivo = metadata_especifica.get("sp_archivo")
+
+    email_destinatario_efectivo = caso["email_respuesta_override"] or caso["email_origen"]
+
     return {
         "id": str(caso["id"]),
         "email_origen": caso["email_origen"],
+        "email_respuesta_override": caso["email_respuesta_override"],
+        "email_destinatario_efectivo": email_destinatario_efectivo,
+        "destinatario_override_audit": destinatario_audit,
         "asunto": caso["asunto"],
         "cuerpo": caso["cuerpo"] or "Sin contenido",
         "estado": caso["estado"],
         "prioridad": caso["nivel_prioridad"],
         "tipo": caso["tipo_caso"],
+        "tipo_workflow": caso["tipo_workflow"],
+        "documento_peticionante": caso["documento_peticionante"],
+        "sp_archivo": sp_archivo,
+        "metadata_especifica": metadata_especifica,
         "fecha": caso["fecha_recibido"].isoformat() if caso["fecha_recibido"] else None,
         "fecha_vencimiento": caso["fecha_vencimiento"].isoformat() if caso["fecha_vencimiento"] else None,
         "canal": "EMAIL",
@@ -553,6 +605,121 @@ async def editar_destinatario(
         "caso_id": caso_id,
         "email_destinatario_efectivo": nuevo_email or actual["email_origen"],
         "fue_override": nuevo_email is not None,
+    }
+
+
+class AplicarPlantillaRequest(BaseModel):
+    """Body para POST /casos/{id}/aplicar-plantilla.
+
+    Aplica una plantilla del catálogo del tenant al borrador del caso.
+    Renderiza placeholders básicos del cuerpo de la plantilla con datos del
+    caso y deja el resultado en `borrador_respuesta`.
+    """
+    plantilla_id: str
+
+
+# Placeholders soportados en el cuerpo de las plantillas (rendering simple).
+# Cualquier `{clave}` desconocido queda como literal — no inventamos datos.
+def _render_placeholders(cuerpo: str, caso_row, hoy_iso: str) -> str:
+    if not cuerpo:
+        return ""
+    mapping = {
+        "cedula":      caso_row.get("documento_peticionante") or "",
+        "documento":   caso_row.get("documento_peticionante") or "",
+        "email":       caso_row.get("email_origen") or "",
+        "asunto":      caso_row.get("asunto") or "",
+        "fecha":       hoy_iso,
+        "radicado":    caso_row.get("numero_radicado") or "",
+        "tipo_caso":   caso_row.get("tipo_caso") or "",
+    }
+    out = cuerpo
+    for k, v in mapping.items():
+        out = out.replace("{" + k + "}", str(v))
+    return out
+
+
+@router.post("/{caso_id}/aplicar-plantilla")
+async def aplicar_plantilla(
+    caso_id: str,
+    body: AplicarPlantillaRequest,
+    request: Request,
+    current_user: UserInToken = Depends(get_current_user),
+    conn=Depends(get_db_connection),
+) -> Dict[str, Any]:
+    """Aplicar una plantilla al borrador del caso (sprint FF — bloque 7).
+
+    Permisos: admin / super_admin (analista no — todavía no decidimos si dejarle).
+    Reglas:
+      - La plantilla debe pertenecer al mismo `cliente_id` que el caso
+        (excepto super_admin, que puede aplicar cualquiera).
+      - Renderiza placeholders básicos en el cuerpo ({cedula}, {fecha}, etc.).
+      - Escribe en `borrador_respuesta` y pone `borrador_estado = 'PENDIENTE_REVISION'`.
+      - Audit: action 'PLANTILLA_APLICADA' con metadata
+        {plantilla_id, plantilla_problematica, longitud_cuerpo}.
+    """
+    if current_user.role not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail="Solo admin / super_admin")
+
+    es_super = current_user.role == "super_admin"
+
+    caso = await conn.fetchrow(
+        """SELECT id, cliente_id, email_origen, asunto, tipo_caso,
+                  numero_radicado, documento_peticionante
+           FROM pqrs_casos
+           WHERE id = $1 AND ($2 OR cliente_id = $3)""",
+        uuid.UUID(caso_id), es_super, uuid.UUID(current_user.tenant_uuid),
+    )
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
+
+    plantilla = await conn.fetchrow(
+        """SELECT id, cliente_id, problematica, cuerpo, tipo_workflow, is_active
+           FROM plantillas_respuesta
+           WHERE id = $1::uuid""",
+        uuid.UUID(body.plantilla_id),
+    )
+    if not plantilla:
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+    if not plantilla["is_active"]:
+        raise HTTPException(status_code=400, detail="Plantilla inactiva")
+    if not es_super and plantilla["cliente_id"] != caso["cliente_id"]:
+        raise HTTPException(status_code=403, detail="Plantilla de otro tenant")
+
+    from datetime import date
+    cuerpo_renderizado = _render_placeholders(
+        plantilla["cuerpo"], dict(caso), date.today().isoformat()
+    )
+
+    await conn.execute(
+        """UPDATE pqrs_casos
+           SET borrador_respuesta = $1,
+               borrador_estado    = 'PENDIENTE_REVISION',
+               updated_at         = NOW()
+           WHERE id = $2""",
+        cuerpo_renderizado, uuid.UUID(caso_id),
+    )
+
+    ip = request.client.host if request.client else None
+    await conn.execute(
+        """INSERT INTO audit_log_respuestas
+              (caso_id, usuario_id, accion, ip_origen, metadata)
+           VALUES ($1, $2, 'PLANTILLA_APLICADA', $3, $4)""",
+        uuid.UUID(caso_id), uuid.UUID(current_user.usuario_id), ip,
+        json.dumps({
+            "plantilla_id": str(plantilla["id"]),
+            "plantilla_problematica": plantilla["problematica"],
+            "plantilla_workflow": plantilla["tipo_workflow"],
+            "longitud_cuerpo": len(cuerpo_renderizado),
+        }),
+    )
+
+    return {
+        "status": "ok",
+        "caso_id": caso_id,
+        "plantilla_id": str(plantilla["id"]),
+        "plantilla_problematica": plantilla["problematica"],
+        "borrador_respuesta": cuerpo_renderizado,
+        "borrador_estado": "PENDIENTE_REVISION",
     }
 
 

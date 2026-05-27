@@ -4,18 +4,22 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle, Clock, Inbox, ArrowRight, Scale,
-  Layers, Send, Database, Activity, TrendingUp,
+  Layers, Send, Database, Activity, TrendingUp, MessageCircle, Target,
 } from "lucide-react";
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, BarChart, Bar,
 } from "recharts";
 import { useAuthStore } from "@/store/authStore";
 import { useDashboardStats } from "@/hooks/useDashboardStats";
 import { useTendencia } from "@/hooks/useTendencia";
+import { useTenantWorkflows } from "@/hooks/useTenantWorkflows";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { formatNumber as nf, formatDateShort as fmtFecha } from "@/lib/format";
 import { PERIODOS, TIPO_COLOR_HEX, type Periodo } from "@/lib/casos-constants";
+import { WORKFLOWS } from "@/lib/workflow-constants";
+import { getProblematicaMeta } from "@/lib/problematica-constants";
 
 export function DashboardMetrics({
   selectedClienteId = "", onVerTodos,
@@ -25,6 +29,7 @@ export function DashboardMetrics({
   const { stats, loading } = useDashboardStats(selectedClienteId, periodo);
   const isAdmin = user?.rol === "admin" || user?.rol === "super_admin";
   const { data: tendencia } = useTendencia(periodo, selectedClienteId, isAdmin);
+  const { tieneAC } = useTenantWorkflows();
 
   // Etiqueta humana del período actual (para títulos dinámicos)
   const periodoLabel = periodo === "dia" ? "hoy" : periodo === "semana" ? "últimos 7 días" : "últimos 30 días";
@@ -393,6 +398,142 @@ export function DashboardMetrics({
           </table>
         </div>
       </div>
+
+      {/* ===== Sprint FF bloque 11: SECCIÓN ATENCIÓN AL CLIENTE =====
+           Solo visible si el tenant tiene workflow AC + el backend devuelve breakdown.
+           Para Recovery/Demo: cero render (workflow_breakdown vendrá null). */}
+      {tieneAC && stats.workflow_breakdown && (() => {
+        const wb = stats.workflow_breakdown;
+        const totalWf = wb.pqrs_count + wb.ac_count;
+        const donutData = [
+          { name: WORKFLOWS.PQRS.label,             value: wb.pqrs_count, hex: WORKFLOWS.PQRS.hex },
+          { name: WORKFLOWS.ATENCION_CLIENTE.label, value: wb.ac_count,   hex: WORKFLOWS.ATENCION_CLIENTE.hex },
+        ];
+        const barData = wb.plantillas_top5.map(p => {
+          const meta = getProblematicaMeta(p.problematica);
+          return { name: p.problematica, label: meta.label, value: p.usos, hex: meta.hex };
+        });
+        const acPct = totalWf > 0 ? Math.round(wb.ac_count / totalWf * 100) : 0;
+        return (
+          <div>
+            <SectionLabel icon={<MessageCircle className="w-3.5 h-3.5 text-primary" />}>
+              Atención al Cliente · operativa sin SLA
+            </SectionLabel>
+            <div className="glass-panel rounded-3xl p-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                {/* IZQUIERDA: donut PQRS vs AC + KPI % match */}
+                <div className="space-y-5">
+                  <div>
+                    <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                      Distribución del período
+                    </p>
+                    {totalWf > 0 ? (
+                      <div className="agente items-center gap-6">
+                        <ResponsiveContainer width={160} height={160}>
+                          <PieChart>
+                            <Pie
+                              data={donutData}
+                              dataKey="value"
+                              cx="50%" cy="50%"
+                              innerRadius={48} outerRadius={72}
+                              paddingAngle={2}
+                              stroke="none"
+                            >
+                              {donutData.map((d, i) => <Cell key={i} fill={d.hex} />)}
+                            </Pie>
+                            <Tooltip
+                              contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }}
+                              formatter={(v) => [nf(Number(v)), "casos"]}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                        <div className="agente-1 space-y-2.5">
+                          {donutData.map((d, i) => {
+                            const pct = totalWf > 0 ? Math.round(d.value / totalWf * 100) : 0;
+                            return (
+                              <div key={i} className="agente items-center justify-between gap-3">
+                                <div className="agente items-center gap-2">
+                                  <span className="w-3 h-3 rounded-sm shrink-0" style={{ background: d.hex }} />
+                                  <span className="text-xs font-semibold text-foreground">{d.name}</span>
+                                </div>
+                                <div className="agente items-baseline gap-2">
+                                  <span className="text-base font-black text-foreground tabular-nums">{nf(d.value)}</span>
+                                  <span className="text-[11px] text-muted-foreground tabular-nums">{pct}%</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          <p className="text-[10px] text-muted-foreground italic pt-1">
+                            AC = {acPct}% del volumen del período
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground italic">Sin casos en el período.</p>
+                    )}
+                  </div>
+
+                  {/* KPI % match plantilla exacta vs IA fallback */}
+                  <div className="rounded-2xl border border-primary/20 bg-primary/5 p-5">
+                    <div className="agente items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] font-semibold text-primary uppercase tracking-wider">% match plantilla exacta</p>
+                        <h3 className="text-4xl font-black text-foreground tabular-nums mt-1">
+                          {wb.pct_match_exacto}<span className="text-xl text-muted-foreground">%</span>
+                        </h3>
+                        <p className="text-[11px] text-muted-foreground mt-1.5">
+                          de los AC del período tienen plantilla exacta (resto va por IA fallback)
+                        </p>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-primary/10 text-primary shrink-0">
+                        <Target className="w-5 h-5" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* DERECHA: top 5 plantillas más usadas (bar horizontal) */}
+                <div>
+                  <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                    Top 5 plantillas usadas
+                  </p>
+                  {barData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={Math.max(180, barData.length * 44)}>
+                      <BarChart data={barData} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
+                        <CartesianGrid horizontal={false} stroke="var(--border)" />
+                        <XAxis type="number" stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
+                        <YAxis
+                          type="category"
+                          dataKey="label"
+                          stroke="var(--muted-foreground)"
+                          fontSize={10}
+                          width={120}
+                          tickFormatter={(t: string) => t.length > 18 ? t.slice(0, 16) + "…" : t}
+                        />
+                        <Tooltip
+                          contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }}
+                          formatter={(v, _n, p) => {
+                            const name = (p as { payload?: { name?: string } })?.payload?.name || "";
+                            return [`${v} usos`, name];
+                          }}
+                        />
+                        <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                          {barData.map((d, i) => <Cell key={i} fill={d.hex} />)}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="text-xs text-muted-foreground italic">
+                      Sin plantillas aplicadas en el período.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

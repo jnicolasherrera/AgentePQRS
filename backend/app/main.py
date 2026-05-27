@@ -9,7 +9,7 @@ from slowapi.errors import RateLimitExceeded
 from app.core.db import init_db_pool, close_db_pool
 from app.core.config import settings
 from app.services.kafka_producer import init_kafka_producer, close_kafka_producer
-from app.api.routes import auth, stream, stats, casos, ai, admin, webhooks
+from app.api.routes import auth, stream, stats, casos, ai, admin, webhooks, plantillas
 
 logger = logging.getLogger("MAIN")
 limiter = Limiter(key_func=get_remote_address)
@@ -52,6 +52,7 @@ app.include_router(stats.router, prefix="/api/v2/stats", tags=["Dashboard Estad�
 app.include_router(casos.router, prefix="/api/v2/casos", tags=["Detalles Casos Triaje"])
 app.include_router(ai.router, prefix="/api/v2/ai", tags=["Inteligencia Artificial"])
 app.include_router(admin.router, prefix="/api/v2/admin", tags=["Administración"])
+app.include_router(plantillas.router, prefix="/api/v2/plantillas", tags=["Plantillas de respuesta"])
 # Webhooks sin prefijo /v2/ — Microsoft/Google no pasan por auth JWT
 app.include_router(webhooks.router, prefix="/api")
 

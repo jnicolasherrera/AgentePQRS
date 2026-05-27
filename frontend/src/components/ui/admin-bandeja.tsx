@@ -2,9 +2,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, RefreshCw, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Trash2, CheckSquare, Square, XCircle, AlertTriangle } from "lucide-react";
+import { Search, RefreshCw, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Trash2, CheckSquare, Square, XCircle, AlertTriangle, Scale, MessageCircle } from "lucide-react";
 import { api } from "@/store/authStore";
 import { CasoDetailOverlay } from "./caso-detail-overlay";
+import { useTenantWorkflows } from "@/hooks/useTenantWorkflows";
+import { WORKFLOW_FILTER_ITEMS, WORKFLOWS, workflowParam, type WorkflowFilter } from "@/lib/workflow-constants";
+import { getProblematicaMeta } from "@/lib/problematica-constants";
+import type { WorkflowType } from "@/types/api";
 
 interface CasoAdmin {
   id: string;
@@ -12,6 +16,9 @@ interface CasoAdmin {
   asunto: string;
   email_origen: string;
   tipo_caso: string;
+  /** Sprint FF bloque 7: discriminador PQRS vs ATENCION_CLIENTE */
+  tipo_workflow?: WorkflowType;
+  problematica_detectada?: string | null;
   estado: string;
   nivel_prioridad: string;
   fecha_recibido: string | null;
@@ -56,6 +63,7 @@ const PAGE_SIZES = [20, 50] as const;
 type BandejaSortKey = "radicado" | "asunto" | "tipo" | "estado" | "asignado" | "prioridad" | "recibido" | "vencimiento";
 
 export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string }) {
+  const { tieneAC } = useTenantWorkflows();
   const [items, setItems] = useState<CasoAdmin[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -64,6 +72,9 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
   const [q, setQ] = useState("");
   const [tipo, setTipo] = useState("");
   const [estado, setEstado] = useState("");
+  // Sprint FF bloque 7: filtro pill PQRS|AC|Ambos. Solo visible si tieneAC.
+  // Default "PQRS" para FF (vista por defecto = lo legal), "all" para resto.
+  const [workflowFilter, setWorkflowFilter] = useState<WorkflowFilter>("PQRS");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<BandejaSortKey>("recibido");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -71,6 +82,15 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
   const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set());
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Cuando descubrimos que el tenant NO tiene AC, el filtro se neutraliza
+  // (asumimos PQRS = todo). Cuando SÍ tiene, dejamos default PQRS.
+  useEffect(() => {
+    if (!tieneAC && workflowFilter !== "PQRS") setWorkflowFilter("PQRS");
+  }, [tieneAC, workflowFilter]);
+
+  const isModoAC     = workflowFilter === "ATENCION_CLIENTE";
+  const isModoAmbos  = workflowFilter === "all" && tieneAC;
 
   const toggleSort = (key: BandejaSortKey) => {
     if (sortBy === key) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -95,6 +115,8 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
       if (estado) params.append("estado", estado);
       if (selectedClienteId) params.append("cliente_id", selectedClienteId);
       if (filtroNoPqrs) params.append("es_pqrs", "false");
+      const wf = workflowParam(workflowFilter);
+      if (wf) params.append("workflow", wf);
       const res = await api.get<BandejaResponse>(`/admin/casos?${params}`);
       setItems(res.data.items);
       setTotal(res.data.total);
@@ -103,7 +125,7 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, q, tipo, estado, selectedClienteId, sortBy, sortDir, filtroNoPqrs]);
+  }, [page, pageSize, q, tipo, estado, selectedClienteId, sortBy, sortDir, filtroNoPqrs, workflowFilter]);
 
   const handleStatusChange = useCallback((casoId: string, changes: Record<string, unknown>) => {
     setItems((prev) => prev.map((c) =>
@@ -119,7 +141,7 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
   // Clear selection when filter changes
   useEffect(() => {
     setSeleccionados(new Set());
-  }, [filtroNoPqrs, page, q, tipo, estado, selectedClienteId]);
+  }, [filtroNoPqrs, page, q, tipo, estado, selectedClienteId, workflowFilter]);
 
   const totalPages = Math.ceil(total / pageSize);
 
@@ -161,6 +183,31 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
 
   return (
     <div className="space-y-4">
+      {/* Sprint FF bloque 7: pill PQRS|AC|Ambos. Solo visible si el tenant
+          tiene buzones ATENCION_CLIENTE activos. Recovery/Demo no lo ven. */}
+      {tieneAC && (
+        <div className="agente items-center gap-2">
+          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mr-2">Vista:</span>
+          <div className="agente items-center gap-1 bg-muted rounded-xl p-1 border border-border">
+            {WORKFLOW_FILTER_ITEMS.map(it => (
+              <button
+                key={it.key}
+                onClick={() => { setWorkflowFilter(it.key); setPage(1); }}
+                className={`agente items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  workflowFilter === it.key
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {it.key === "PQRS" && <Scale className="w-3 h-3" />}
+                {it.key === "ATENCION_CLIENTE" && <MessageCircle className="w-3 h-3" />}
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Barra de filtros */}
       <div className="agente items-center gap-3 agente-wrap">
         <div className="relative agente-1 min-w-[200px]">
@@ -173,25 +220,31 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
             className="w-full pl-9 pr-4 py-2 bg-muted border border-border rounded-xl text-sm text-foreground focus:outline-none focus:border-primary placeholder:text-muted-foreground transition-colors"
           />
         </div>
-        <select value={tipo} onChange={e => { setTipo(e.target.value); setPage(1); }}
-          className="bg-muted border border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary cursor-pointer">
-          {TIPOS.map(t => <option key={t} value={t}>{t || "Todos los tipos"}</option>)}
-        </select>
+        {/* Filtro Tipo: no aplica en modo AC (los AC tienen tipo_caso=NULL). */}
+        {!isModoAC && (
+          <select value={tipo} onChange={e => { setTipo(e.target.value); setPage(1); }}
+            className="bg-muted border border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary cursor-pointer">
+            {TIPOS.map(t => <option key={t} value={t}>{t || "Todos los tipos"}</option>)}
+          </select>
+        )}
         <select value={estado} onChange={e => { setEstado(e.target.value); setPage(1); }}
           className="bg-muted border border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary cursor-pointer">
           {ESTADOS.map(s => <option key={s} value={s}>{s || "Todos los estados"}</option>)}
         </select>
-        <button
-          onClick={() => { setFiltroNoPqrs(f => !f); setPage(1); }}
-          className={`agente items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold transition-all ${
-            filtroNoPqrs
-              ? "bg-red-500/20 border border-red-500/40 text-red-400 shadow-[0_0_10px_rgba(239,68,68,0.2)]"
-              : "bg-muted border border-border text-muted-foreground hover:bg-secondary"
-          }`}
-        >
-          <XCircle className="w-3.5 h-3.5" />
-          No PQRS
-        </button>
+        {/* Filtro "No PQRS": ya no expone el botón en modo AC (no es válido el cruce). */}
+        {!isModoAC && (
+          <button
+            onClick={() => { setFiltroNoPqrs(f => !f); setPage(1); }}
+            className={`agente items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold transition-all ${
+              filtroNoPqrs
+                ? "bg-red-500/20 border border-red-500/40 text-red-400 shadow-[0_0_10px_rgba(239,68,68,0.2)]"
+                : "bg-muted border border-border text-muted-foreground hover:bg-secondary"
+            }`}
+          >
+            <XCircle className="w-3.5 h-3.5" />
+            No PQRS
+          </button>
+        )}
         <button onClick={fetchCasos}
           className="p-2 bg-muted border border-border rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
           <RefreshCw className="w-4 h-4" />
@@ -249,9 +302,18 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                   <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("asunto")}>
                     <span className="agente items-center gap-1">Asunto <SortIcon k="asunto" /></span>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("tipo")}>
-                    <span className="agente items-center gap-1">Tipo <SortIcon k="tipo" /></span>
-                  </th>
+                  {/* Modo Ambos: chip workflow para distinguir PQRS de AC. */}
+                  {isModoAmbos && (
+                    <th className="px-4 py-3 text-muted-foreground">Workflow</th>
+                  )}
+                  {/* Modo AC: "Problemática" reemplaza Tipo. Resto: Tipo. */}
+                  {isModoAC ? (
+                    <th className="px-4 py-3 text-muted-foreground">Problemática</th>
+                  ) : (
+                    <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("tipo")}>
+                      <span className="agente items-center gap-1">Tipo <SortIcon k="tipo" /></span>
+                    </th>
+                  )}
                   <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("estado")}>
                     <span className="agente items-center gap-1">Estado <SortIcon k="estado" /></span>
                   </th>
@@ -264,9 +326,12 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                   <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("recibido")}>
                     <span className="agente items-center gap-1">Recibido <SortIcon k="recibido" /></span>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("vencimiento")}>
-                    <span className="agente items-center gap-1">Vencimiento <SortIcon k="vencimiento" /></span>
-                  </th>
+                  {/* Vencimiento: oculto en AC (sin SLA legal). */}
+                  {!isModoAC && (
+                    <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("vencimiento")}>
+                      <span className="agente items-center gap-1">Vencimiento <SortIcon k="vencimiento" /></span>
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -300,11 +365,41 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
-                      <span className={`text-[10px] font-bold px-2 py-1 rounded-lg border bg-transparent ${TIPO_CLS[caso.tipo_caso] ?? "text-muted-foreground border-border"}`}>
-                        {caso.tipo_caso}
-                      </span>
-                    </td>
+                    {/* Modo Ambos: chip workflow (⚖️/💬) */}
+                    {isModoAmbos && (() => {
+                      const wfKey = caso.tipo_workflow ?? "PQRS";
+                      const wf = WORKFLOWS[wfKey];
+                      return (
+                        <td className="px-4 py-3">
+                          <span className={`agente items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border ${wf.badgeTw}`}>
+                            {wf.icon === "scale" ? <Scale className="w-3 h-3" /> : <MessageCircle className="w-3 h-3" />}
+                            {wf.shortLabel}
+                          </span>
+                        </td>
+                      );
+                    })()}
+                    {/* Modo AC: Problemática reemplaza Tipo. */}
+                    {isModoAC ? (
+                      <td className="px-4 py-3 max-w-[180px]">
+                        {(() => {
+                          const meta = getProblematicaMeta(caso.problematica_detectada);
+                          return (
+                            <span
+                              className={`inline-block text-[10px] font-bold px-2 py-1 rounded-lg border truncate max-w-full ${meta.badgeTw}`}
+                              title={caso.problematica_detectada || "Sin clasificar"}
+                            >
+                              {meta.label}
+                            </span>
+                          );
+                        })()}
+                      </td>
+                    ) : (
+                      <td className="px-4 py-3">
+                        <span className={`text-[10px] font-bold px-2 py-1 rounded-lg border bg-transparent ${TIPO_CLS[caso.tipo_caso] ?? "text-muted-foreground border-border"}`}>
+                          {caso.tipo_caso || "—"}
+                        </span>
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <span className={`text-xs font-bold ${ESTADO_CLS[caso.estado] ?? "text-muted-foreground"}`}>
                         {caso.estado}
@@ -328,15 +423,18 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                     <td className="px-4 py-3 text-muted-foreground text-xs">
                       {caso.fecha_recibido ? new Date(caso.fecha_recibido).toLocaleDateString() : "\u2014"}
                     </td>
-                    <td className="px-4 py-3">
-                      {caso.fecha_vencimiento ? (
-                        <span className={`text-xs font-bold ${new Date(caso.fecha_vencimiento) < new Date() ? "text-red-400" : "text-muted-foreground"}`}>
-                          {new Date(caso.fecha_vencimiento).toLocaleDateString()}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground/70 text-xs">{"\u2014"}</span>
-                      )}
-                    </td>
+                    {/* Vencimiento: oculta en modo AC (sin SLA legal). */}
+                    {!isModoAC && (
+                      <td className="px-4 py-3">
+                        {caso.fecha_vencimiento ? (
+                          <span className={`text-xs font-bold ${new Date(caso.fecha_vencimiento) < new Date() ? "text-red-400" : "text-muted-foreground"}`}>
+                            {new Date(caso.fecha_vencimiento).toLocaleDateString()}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/70 text-xs">{"\u2014"}</span>
+                        )}
+                      </td>
+                    )}
                   </motion.tr>
                 ))}
               </tbody>
