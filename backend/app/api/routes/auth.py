@@ -118,33 +118,48 @@ async def me(
 
     Sprint FlexFintech 2026-05-27 — bloque 7. El frontend lo usa al boot para
     decidir si mostrar el filtro PQRS|AC en Bandeja y la sección AC en
-    Dashboard (solo para tenants que tienen buzones con ATENCION_CLIENTE).
+    Dashboard.
 
-    `workflows_disponibles` se calcula como DISTINCT tipo_workflow de los
-    config_buzones is_active=TRUE del tenant. Para super_admin (sin tenant
-    propio) devuelve el set global ["PQRS", "ATENCION_CLIENTE"] si hay buzones
-    AC en cualquier tenant, sino solo ["PQRS"]. Default seguro: ["PQRS"].
+    `workflows_disponibles` = UNIÓN de:
+      1) DISTINCT tipo_workflow de config_buzones is_active=TRUE del tenant.
+      2) DISTINCT tipo_workflow de casos existentes (pqrs_casos).
+      3) DISTINCT tipo_workflow de plantillas activas del tenant.
+
+    Hotfix 2026-05-27: antes solo (1). Pero FlexFintech tenía 3 casos AC + 49
+    plantillas AC seedeadas pero 0 buzones AC (default migración) → la UI
+    AC quedaba oculta aunque los datos existían. La unión refleja mejor "el
+    tenant USA AC" que "el tenant tiene buzones AC". Default seguro: ["PQRS"].
     """
     es_super = current_user.role == 'super_admin'
 
     if es_super:
-        rows = await conn.fetch(
-            "SELECT DISTINCT tipo_workflow FROM config_buzones WHERE is_active = TRUE"
-        )
+        rows = await conn.fetch("""
+            SELECT tipo_workflow FROM config_buzones WHERE is_active = TRUE
+            UNION
+            SELECT DISTINCT tipo_workflow FROM pqrs_casos
+            UNION
+            SELECT DISTINCT tipo_workflow FROM plantillas_respuesta WHERE is_active = TRUE
+        """)
         tenant_info = None
     else:
-        rows = await conn.fetch(
-            "SELECT DISTINCT tipo_workflow FROM config_buzones "
-            "WHERE cliente_id = $1::uuid AND is_active = TRUE",
-            uuid.UUID(current_user.tenant_uuid),
-        )
+        tenant_uuid = uuid.UUID(current_user.tenant_uuid)
+        rows = await conn.fetch("""
+            SELECT tipo_workflow FROM config_buzones
+             WHERE cliente_id = $1::uuid AND is_active = TRUE
+            UNION
+            SELECT DISTINCT tipo_workflow FROM pqrs_casos
+             WHERE cliente_id = $1::uuid
+            UNION
+            SELECT DISTINCT tipo_workflow FROM plantillas_respuesta
+             WHERE cliente_id = $1::uuid AND is_active = TRUE
+        """, tenant_uuid)
         t = await conn.fetchrow(
             "SELECT id, nombre FROM clientes_tenant WHERE id = $1::uuid",
-            uuid.UUID(current_user.tenant_uuid),
+            tenant_uuid,
         )
         tenant_info = {"id": str(t["id"]), "nombre": t["nombre"]} if t else None
 
-    workflows = sorted({r["tipo_workflow"] for r in rows}) or ["PQRS"]
+    workflows = sorted({r["tipo_workflow"] for r in rows if r["tipo_workflow"]}) or ["PQRS"]
 
     return {
         "usuario_id": current_user.usuario_id,
