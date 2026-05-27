@@ -13,11 +13,15 @@ logger = logging.getLogger("STATS")
 async def get_dashboard_stats(
     periodo: str = "semana",
     cliente_id: Optional[str] = None,
+    workflow: Optional[str] = None,  # PQRS | ATENCION_CLIENTE | None=ambos (sprint FF bloque 7)
     current_user: UserInToken = Depends(get_current_user),
     conn = Depends(get_db_connection)
 ) -> Dict[str, Any]:
     es_super = current_user.role == 'super_admin'
     es_abogado = current_user.role == 'analista'
+
+    if workflow is not None and workflow not in ("PQRS", "ATENCION_CLIENTE"):
+        raise HTTPException(status_code=400, detail="workflow inválido")
 
     # Período del dashboard: aplica al WHERE base => TODO se filtra por el rango
     # (activos creados en el período, vencidos del período, ingresos del período…).
@@ -42,6 +46,9 @@ async def get_dashboard_stats(
     if es_abogado:
         params.append(uuid.UUID(current_user.usuario_id))
         filtros.append(f"asignado_a = ${len(params)}::uuid")
+    if workflow:
+        params.append(workflow)
+        filtros.append(f"tipo_workflow = ${len(params)}")
     w = "WHERE " + " AND ".join(filtros)
 
     # KPIs en una sola query con COUNT(*) FILTER (1 RTT vs 14)
@@ -136,9 +143,97 @@ async def get_dashboard_stats(
 
     tasa_escalamiento = round((tutelas_escaladas / tutelas_total * 100), 1) if tutelas_total > 0 else 0
 
+    # ─── Sprint FF bloque 7: workflow_breakdown (solo si el tenant tiene AC) ───
+    # Detecta si el tenant del dashboard usa workflow ATENCION_CLIENTE para
+    # decidir si calcular el bloque. Cero costo extra para Recovery/Demo.
+    workflow_breakdown = None
+    detect_tenant = target_tenant  # str UUID o None
+    tiene_ac = False
+    if detect_tenant:
+        tiene_ac = await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM config_buzones "
+            "WHERE cliente_id = $1::uuid AND tipo_workflow = 'ATENCION_CLIENTE' "
+            "AND is_active = TRUE)",
+            uuid.UUID(detect_tenant),
+        )
+    elif es_super:
+        # super_admin sin cliente_id => mostramos breakdown si hay ALGÚN tenant con AC
+        tiene_ac = await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM config_buzones "
+            "WHERE tipo_workflow = 'ATENCION_CLIENTE' AND is_active = TRUE)"
+        )
+
+    if tiene_ac:
+        # Counts por workflow del período. Reutiliza el WHERE base del dashboard
+        # excepto el filtro de workflow (queremos ver ambos breakdown).
+        bd_params = []
+        bd_filtros = [f"fecha_recibido >= CURRENT_DATE - INTERVAL '{dias} days'"]
+        if target_tenant:
+            bd_params.append(uuid.UUID(target_tenant))
+            bd_filtros.append(f"cliente_id = ${len(bd_params)}::uuid")
+        if es_abogado:
+            bd_params.append(uuid.UUID(current_user.usuario_id))
+            bd_filtros.append(f"asignado_a = ${len(bd_params)}::uuid")
+        bd_w = "WHERE " + " AND ".join(bd_filtros)
+
+        bd = await conn.fetchrow(f"""
+            SELECT
+              COUNT(*) FILTER (WHERE tipo_workflow = 'PQRS')              AS pqrs_count,
+              COUNT(*) FILTER (WHERE tipo_workflow = 'ATENCION_CLIENTE')  AS ac_count
+            FROM pqrs_casos {bd_w}
+        """, *bd_params)
+
+        # Top 5 plantillas más usadas en el período (vía audit_log PLANTILLA_APLICADA)
+        top_plantillas = await conn.fetch(
+            """SELECT pr.problematica, COUNT(*) AS usos
+               FROM audit_log_respuestas a
+               JOIN pqrs_casos c ON c.id = a.caso_id
+               JOIN plantillas_respuesta pr
+                 ON (a.metadata->>'plantilla_id')::uuid = pr.id
+               WHERE a.accion = 'PLANTILLA_APLICADA'
+                 AND a.created_at >= CURRENT_DATE - make_interval(days => $1)
+                 AND ($2::uuid IS NULL OR c.cliente_id = $2::uuid)
+               GROUP BY pr.problematica
+               ORDER BY usos DESC LIMIT 5""",
+            dias,
+            uuid.UUID(target_tenant) if target_tenant else None,
+        )
+
+        # % de casos AC del período que tienen problematica_detectada con plantilla matching
+        # (proxy de "match exacto" vs "fallback IA"). Si problematica_detectada está poblada
+        # y existe una plantilla con misma `problematica`, contó como match.
+        match_stats = await conn.fetchrow(f"""
+            SELECT
+              COUNT(*) FILTER (WHERE c.problematica_detectada IS NOT NULL
+                               AND EXISTS(SELECT 1 FROM plantillas_respuesta pr
+                                          WHERE pr.cliente_id = c.cliente_id
+                                          AND pr.problematica = c.problematica_detectada
+                                          AND pr.is_active = TRUE)) AS con_match,
+              COUNT(*) AS total_ac
+            FROM pqrs_casos c
+            WHERE c.tipo_workflow = 'ATENCION_CLIENTE'
+              AND c.fecha_recibido >= CURRENT_DATE - INTERVAL '{dias} days'
+              {("AND c.cliente_id = $1::uuid" if target_tenant else "")}
+        """, *([uuid.UUID(target_tenant)] if target_tenant else []))
+
+        pct_match = 0
+        if match_stats and match_stats["total_ac"] > 0:
+            pct_match = round(match_stats["con_match"] / match_stats["total_ac"] * 100, 1)
+
+        workflow_breakdown = {
+            "pqrs_count": bd["pqrs_count"] or 0,
+            "ac_count":   bd["ac_count"]   or 0,
+            "plantillas_top5": [
+                {"problematica": r["problematica"], "usos": r["usos"]}
+                for r in top_plantillas
+            ],
+            "pct_match_exacto": pct_match,
+        }
+
     return {
         "periodo": periodo,
         "dias": dias,
+        "workflow_breakdown": workflow_breakdown,
         "kpis": {
             "total_casos": total_casos,
             "casos_criticos": total_criticos,
@@ -346,48 +441,54 @@ async def rendimiento_tipos(
 async def rendimiento_tendencia(
     periodo: str = "semana",
     cliente_id: Optional[str] = None,
+    workflow: Optional[str] = None,  # PQRS | ATENCION_CLIENTE | None=ambos (sprint FF bloque 7)
     current_user: UserInToken = Depends(get_current_user),
     conn = Depends(get_db_connection),
 ):
     if current_user.role not in ["admin", "super_admin"]:
         raise HTTPException(status_code=403)
+    if workflow is not None and workflow not in ("PQRS", "ATENCION_CLIENTE"):
+        raise HTTPException(status_code=400, detail="workflow inválido")
+
     es_super = current_user.role == "super_admin"
     intervalos = {"dia": 1, "semana": 7, "mes": 30}
     dias = intervalos.get(periodo, 7)
 
-    if es_super and not cliente_id:
-        rec = await conn.fetch("""
-            SELECT DATE(fecha_recibido AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
-            FROM pqrs_casos WHERE fecha_recibido >= NOW() - make_interval(days => $1)
-            GROUP BY d ORDER BY d
-        """, dias)
-        cer = await conn.fetch("""
-            SELECT DATE(enviado_at AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
-            FROM pqrs_casos WHERE enviado_at IS NOT NULL AND enviado_at >= NOW() - make_interval(days => $1)
-            GROUP BY d ORDER BY d
-        """, dias)
-        tut = await conn.fetch("""
-            SELECT DATE(fecha_recibido AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
-            FROM pqrs_casos WHERE tipo_caso = 'TUTELA' AND fecha_recibido >= NOW() - make_interval(days => $1)
-            GROUP BY d ORDER BY d
-        """, dias)
-    else:
+    # Refactor sprint FF bloque 7: query unificada con WHERE dinámico (de 6 a 3 RTT)
+    filtros_base = ["1=1"]
+    params: list = [dias]  # $1 fijo siempre
+    idx = 2
+    if not (es_super and not cliente_id):
         tid = uuid.UUID(cliente_id) if (es_super and cliente_id) else uuid.UUID(current_user.tenant_uuid)
-        rec = await conn.fetch("""
-            SELECT DATE(fecha_recibido AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
-            FROM pqrs_casos WHERE cliente_id = $1 AND fecha_recibido >= NOW() - make_interval(days => $2)
-            GROUP BY d ORDER BY d
-        """, tid, dias)
-        cer = await conn.fetch("""
-            SELECT DATE(enviado_at AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
-            FROM pqrs_casos WHERE cliente_id = $1 AND enviado_at IS NOT NULL AND enviado_at >= NOW() - make_interval(days => $2)
-            GROUP BY d ORDER BY d
-        """, tid, dias)
-        tut = await conn.fetch("""
-            SELECT DATE(fecha_recibido AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
-            FROM pqrs_casos WHERE cliente_id = $1 AND tipo_caso = 'TUTELA' AND fecha_recibido >= NOW() - make_interval(days => $2)
-            GROUP BY d ORDER BY d
-        """, tid, dias)
+        filtros_base.append(f"cliente_id = ${idx}::uuid")
+        params.append(tid)
+        idx += 1
+    if workflow:
+        filtros_base.append(f"tipo_workflow = ${idx}")
+        params.append(workflow)
+        idx += 1
+    base_w = " AND ".join(filtros_base)
+
+    rec = await conn.fetch(f"""
+        SELECT DATE(fecha_recibido AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
+        FROM pqrs_casos
+        WHERE {base_w} AND fecha_recibido >= NOW() - make_interval(days => $1)
+        GROUP BY d ORDER BY d
+    """, *params)
+    cer = await conn.fetch(f"""
+        SELECT DATE(enviado_at AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
+        FROM pqrs_casos
+        WHERE {base_w} AND enviado_at IS NOT NULL
+              AND enviado_at >= NOW() - make_interval(days => $1)
+        GROUP BY d ORDER BY d
+    """, *params)
+    tut = await conn.fetch(f"""
+        SELECT DATE(fecha_recibido AT TIME ZONE 'America/Bogota') AS d, COUNT(*) AS n
+        FROM pqrs_casos
+        WHERE {base_w} AND tipo_caso = 'TUTELA'
+              AND fecha_recibido >= NOW() - make_interval(days => $1)
+        GROUP BY d ORDER BY d
+    """, *params)
 
     recibidos = {str(r["d"]): r["n"] for r in rec}
     cerrados  = {str(r["d"]): r["n"] for r in cer}
