@@ -77,9 +77,9 @@ from app.services.storage_engine import upload_file as upload_to_minio
 from app.services.zoho_engine import ZohoServiceV2
 from app.services.sharepoint_engine import SharePointEngineV2
 from app.services.plantilla_engine import generar_borrador_para_caso
-from app.services.clasificador import parece_pqrs, es_remitente_juzgado
+from app.services.clasificador import parece_pqrs, es_remitente_juzgado, es_spam
 from app.services.workflow_classifier import clasificar_workflow
-from app.services.plantilla_engine import detectar_problematica
+from app.services.plantilla_engine import detectar_problematica_dinamica
 from app.constants import TENANT_ABOGADOS_RECOVERY
 
 _RE_PREFIX = re.compile(r'^(?:(?:[a-z]{1,4}\s*-\s*)+)?(?:re|fw|fwd|rv|rta|r)\s*:\s*', re.IGNORECASE)
@@ -226,6 +226,43 @@ async def _ensure_alive_connection(conn, dsn: str, force: bool = False):
     return conn, False
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Helpers para documento_peticionante (sprint FF fix bug_020A)
+# ─────────────────────────────────────────────────────────────────────────
+
+# Patrón cédula colombiana: secuencia de 6-12 dígitos, opcionalmente con
+# puntos como separadores. Acepta "1.007.403.296", "1007403296", "12345678".
+_RE_CEDULA = re.compile(r'\b(\d{1,3}(?:\.\d{3}){2,4}|\d{6,12})\b')
+
+
+async def _lookup_cedula_historica(conn, cliente_id, sender):
+    """Busca cédula en historico_email_cedula por sender (case-insensitive)."""
+    if not sender:
+        return None
+    try:
+        row = await conn.fetchrow(
+            "SELECT cedula FROM historico_email_cedula "
+            "WHERE cliente_id = $1 AND lower(email) = lower($2) LIMIT 1",
+            cliente_id, sender,
+        )
+        return row["cedula"] if row else None
+    except Exception as e:
+        logger.warning(f"lookup cedula histórica falló: {e}")
+        return None
+
+
+def _extraer_cedula_del_cuerpo(cuerpo):
+    """Fallback: extrae cédula del cuerpo del email. None si no encuentra."""
+    if not cuerpo:
+        return None
+    m = _RE_CEDULA.search(cuerpo[:2000])
+    if not m:
+        return None
+    raw = m.group(1)
+    digits = re.sub(r'\D', '', raw)
+    return digits if 6 <= len(digits) <= 12 else None
+
+
 async def procesar_atencion_cliente(conn, r, em, c_id, b, dt, prov):
     """Flow simplificado para emails clasificados como ATENCION_CLIENTE
     (consultas operativas, no PQRS legal).
@@ -239,9 +276,35 @@ async def procesar_atencion_cliente(conn, r, em, c_id, b, dt, prov):
     - Inserta `tipo_workflow='ATENCION_CLIENTE'` + `problematica_detectada`.
     - Generación de borrador filtra plantillas por workflow=ATENCION_CLIENTE.
 
-    Sprint FlexFintech 2026-05-27 — bloque 3.
+    Sprint FlexFintech 2026-05-27 — bloque 3 + fixes ultrareview #11.
     """
-    problematica = detectar_problematica(em['subject'], em['body'])
+    # bug_005 fix: filtro de spam ANTES de cualquier insert / borrador / SSE.
+    # El flow PQRS pasa por parece_pqrs (que filtra noreply@, newsletter@, etc.);
+    # AC bypassaba ese filtro y procesaba DHL/transactional/newsletter como casos.
+    if es_spam(em['sender'], em['subject']):
+        logger.info(f"AC ignorado (spam): {em['subject'][:60]}")
+        try:
+            if prov == 'OUTLOOK':
+                em['prov_obj'].mark_as_read(em['email_buzon'], em['id'])
+            else:
+                em['prov_obj'].mark_as_read(em['id'])
+        except Exception:
+            pass
+        return None
+
+    # bug_016 fix: detector dinámico — matchea también las plantillas
+    # DB seedeadas para FF (49 plantillas con keywords), no solo las 8 hardcoded.
+    problematica = await detectar_problematica_dinamica(
+        conn, str(c_id), em['subject'], em['body'],
+        tipo_workflow='ATENCION_CLIENTE',
+    )
+
+    # bug_020A fix: autocompletar documento_peticionante.
+    # 1) Lookup en historico_email_cedula (3010 pares seedeados FF).
+    # 2) Fallback a extracción regex del cuerpo.
+    documento = await _lookup_cedula_historica(conn, c_id, em['sender'])
+    if not documento:
+        documento = _extraer_cedula_del_cuerpo(em['body'])
 
     # Round-robin entre agentes (admin/analista/abogado activos)
     agentes = await conn.fetch(
@@ -260,12 +323,12 @@ async def procesar_atencion_cliente(conn, r, em, c_id, b, dt, prov):
         """INSERT INTO pqrs_casos
               (cliente_id, email_origen, asunto, cuerpo, estado, nivel_prioridad,
                fecha_recibido, tipo_workflow, problematica_detectada,
-               external_msg_id, asignado_a, fecha_asignacion)
-           VALUES ($1,$2,$3,$4,'ABIERTO','NORMAL',$5,'ATENCION_CLIENTE',$6,$7,$8,$9)
+               documento_peticionante, external_msg_id, asignado_a, fecha_asignacion)
+           VALUES ($1,$2,$3,$4,'ABIERTO','NORMAL',$5,'ATENCION_CLIENTE',$6,$7,$8,$9,$10)
            ON CONFLICT (cliente_id, external_msg_id) WHERE external_msg_id IS NOT NULL DO NOTHING
            RETURNING id""",
         c_id, em['sender'], em['subject'], em['body'], dt,
-        problematica, (em['id'] or '').strip() or None,
+        problematica, documento, (em['id'] or '').strip() or None,
         asignado_a, fecha_asignacion,
     )
     if not db_id:
@@ -390,13 +453,16 @@ async def master_worker():
                     if dt.tzinfo is None:
                         dt = dt.replace(tzinfo=_tz.utc)
 
-                    # Cutoff: ignorar mails anteriores a procesar_desde (evita
-                    # reprocesar histórico al activar buzón nuevo / cambiar workflow).
-                    if procesar_desde and dt < procesar_desde:
+                    # bug_010 fix: chequear seguimiento ANTES del cutoff. Un Re:
+                    # viejo de un caso abierto debe registrarse como comentario,
+                    # no descartarse silenciosamente. _registrar_seguimiento es
+                    # barato (short-circuit si subject no es Re:/Fw:).
+                    if await _registrar_seguimiento(conn, em, c_id):
                         continue
 
-                    # Respuesta de ciudadano a caso existente → seguimiento, no nuevo caso
-                    if await _registrar_seguimiento(conn, em, c_id):
+                    # Cutoff: ignorar mails anteriores a procesar_desde (evita
+                    # reprocesar histórico como CASOS NUEVOS al activar buzón).
+                    if procesar_desde and dt < procesar_desde:
                         continue
 
                     # ─── Dispatcher PQRS vs ATENCION_CLIENTE (sprint FF bloque 3) ───
@@ -432,12 +498,20 @@ async def master_worker():
                         asignado_a = analistas[idx % len(analistas)]['id']
                         fecha_asignacion = dt
 
+                    # bug_020A fix: populate documento_peticionante.
+                    # Prioridad: clasificar_hibrido.cedula → historico_email_cedula → regex body.
+                    documento = (resultado.cedula or "").strip() or None
+                    if not documento:
+                        documento = await _lookup_cedula_historica(conn, c_id, em['sender'])
+                    if not documento:
+                        documento = _extraer_cedula_del_cuerpo(em['body'])
+
                     db_id = await conn.fetchval(
-                        """INSERT INTO pqrs_casos (cliente_id, email_origen, asunto, cuerpo, estado, nivel_prioridad, fecha_recibido, tipo_caso, fecha_vencimiento, external_msg_id, asignado_a, fecha_asignacion)
-                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                        """INSERT INTO pqrs_casos (cliente_id, email_origen, asunto, cuerpo, estado, nivel_prioridad, fecha_recibido, tipo_caso, fecha_vencimiento, documento_peticionante, external_msg_id, asignado_a, fecha_asignacion)
+                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
                            ON CONFLICT (cliente_id, external_msg_id) WHERE external_msg_id IS NOT NULL DO NOTHING
                            RETURNING id""",
-                        c_id, em['sender'], em['subject'], em['body'], 'ABIERTO', resultado.prioridad.value, dt, resultado.tipo.value, venc, (em['id'] or '').strip() or None, asignado_a, fecha_asignacion
+                        c_id, em['sender'], em['subject'], em['body'], 'ABIERTO', resultado.prioridad.value, dt, resultado.tipo.value, venc, documento, (em['id'] or '').strip() or None, asignado_a, fecha_asignacion
                     )
                     if not db_id:
                         logger.info(f"⏭️  Email ya procesado, ignorando: {em['id'][:20]}")

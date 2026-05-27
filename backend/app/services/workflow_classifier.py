@@ -32,15 +32,42 @@ Workflow = Literal["PQRS", "ATENCION_CLIENTE"]
 
 
 # ── Señales de PQRS legal (orden importa: más específico primero) ─────────
-_PQRS_DOMAINS_JUDICIALES = (
-    "@ramajudicial.gov.co",
-    "@cendoj.ramajudicial.gov.co",
-    "@jurisdiccion",
-    "@juzgado",
-    "@tribunal",
-    "@consejodeestado",
-    "@cortesuprema",
+#
+# bug_021 fix (ultrareview #11): anclar match al dominio del sender.
+# Antes hacía `"@juzgado" in sender` y matcheaba "reservas@juzgadodelapaz.example"
+# (un bar) como PQRS. Ahora se extrae el dominio del sender y se chequea:
+#   - dominios completos (match exacto o subdominio: endswith("." + dom)),
+#   - prefijos de dominio anclados al inicio + separador "." o "-"
+#     (evita que "juzgadodelapaz.example" matchee "juzgado").
+_PQRS_DOMAINS_COMPLETOS = (
+    "ramajudicial.gov.co",
+    "cendoj.ramajudicial.gov.co",
+    "consejodeestado.gov.co",
+    "cortesuprema.gov.co",
 )
+_PQRS_DOMAIN_PREFIJOS = ("juzgado", "tribunal", "jurisdiccion")
+# Permite dígitos entre el prefijo y el separador (`juzgado12.gov.co`),
+# pero NO letras (`juzgadodelapaz.example` queda fuera).
+_RE_PQRS_PREFIJO = re.compile(
+    r"^(?:" + "|".join(_PQRS_DOMAIN_PREFIJOS) + r")\d*[\.\-]"
+)
+
+
+def _es_sender_judicial(sender_l: str) -> bool:
+    """True si el dominio del sender corresponde a una entidad judicial CO."""
+    if "@" not in sender_l:
+        return False
+    dom = sender_l.rsplit("@", 1)[-1].strip()
+    if not dom:
+        return False
+    # 1) Dominio exacto o subdominio de alguno de los completos
+    for d in _PQRS_DOMAINS_COMPLETOS:
+        if dom == d or dom.endswith("." + d):
+            return True
+    # 2) Prefijo anclado (juzgado05.algo, tribunal-x.algo)
+    if _RE_PQRS_PREFIJO.match(dom):
+        return True
+    return False
 
 # Frases legales explícitas — alta confianza PQRS
 _PQRS_KEYWORDS_FUERTES = (
@@ -133,7 +160,7 @@ def clasificar_workflow(
         'PQRS' o 'ATENCION_CLIENTE'.
     """
     sender_l = (sender or "").lower()
-    if any(d in sender_l for d in _PQRS_DOMAINS_JUDICIALES):
+    if _es_sender_judicial(sender_l):
         return "PQRS"  # judicial siempre PQRS, sin ambigüedad
 
     texto = f"{asunto or ''} {(cuerpo or '')[:1500]}".lower()

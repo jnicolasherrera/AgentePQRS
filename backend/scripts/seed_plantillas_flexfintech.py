@@ -69,6 +69,10 @@ MAPPING_RTAS = {
         "COMPROBANTE_SIN_DOCUMENTO", "ATENCION_CLIENTE",
         "Comprobante recibido pero falta documento del cliente", [],
     ),
+    # NOTA: "ANTENCION" (con N extra) NO es un typo del código — es como
+    # literalmente aparece en el Excel del cliente. Las 3 keys siguientes
+    # preservan ese typo a propósito para que el match exacto funcione.
+    # Si en algún momento el Excel se "limpia" a "ATENCION", actualizar acá.
     ("ANTENCION AL CLIENTE", "CASO EN REVISION"): (
         "CASO_EN_REVISION", "ATENCION_CLIENTE",
         "Confirmar al cliente que su caso ya fue asignado a revisión", [],

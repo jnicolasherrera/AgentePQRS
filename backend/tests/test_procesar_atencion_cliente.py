@@ -28,7 +28,32 @@ def _mock_conn(insert_returns=None):
     c.execute = AsyncMock(return_value="OK")
     c.fetch = AsyncMock(return_value=[])  # no agentes por default
     c.fetchval = AsyncMock(return_value=insert_returns)
+    c.fetchrow = AsyncMock(return_value=None)  # _lookup_cedula_historica → None
     return c
+
+
+# Stack común: dispatcher AC patchea detectar_problematica_dinamica,
+# _lookup_cedula_historica y generar_borrador_para_caso para no chocar
+# con queries reales en tests unitarios.
+def _patches_ac(detectar_return=None, lookup_return=None, borrador_mock=None):
+    from contextlib import ExitStack
+    stack = ExitStack()
+    stack.enter_context(patch(
+        "master_worker_outlook.detectar_problematica_dinamica",
+        new=AsyncMock(return_value=detectar_return),
+    ))
+    stack.enter_context(patch(
+        "master_worker_outlook._lookup_cedula_historica",
+        new=AsyncMock(return_value=lookup_return),
+    ))
+    stack.enter_context(patch(
+        "master_worker_outlook.es_spam", return_value=False,
+    ))
+    b = borrador_mock or AsyncMock()
+    stack.enter_context(patch(
+        "master_worker_outlook.generar_borrador_para_caso", new=b,
+    ))
+    return stack, b
 
 
 def _mock_redis(rr_idx=1):
@@ -68,7 +93,8 @@ class TestProcesarAtencionCliente:
         r = _mock_redis()
         em = _em(subject="Solicito paz y salvo", body="Necesito mi certificado")
 
-        with patch("master_worker_outlook.generar_borrador_para_caso", new=AsyncMock()):
+        stack, _ = _patches_ac()
+        with stack:
             db_id = await procesar_atencion_cliente(
                 conn, r, em, TENANT_FF, _buzon(),
                 datetime(2026, 5, 27, 10, 0, 0, tzinfo=timezone.utc), "OUTLOOK",
@@ -82,6 +108,7 @@ class TestProcesarAtencionCliente:
         assert "'ATENCION_CLIENTE'" in sql
         assert "tipo_workflow" in sql
         assert "problematica_detectada" in sql
+        assert "documento_peticionante" in sql  # bug_020A fix
 
     @pytest.mark.asyncio
     async def test_publica_sse_con_tipo_atencion_cliente(self):
@@ -90,13 +117,13 @@ class TestProcesarAtencionCliente:
         r = _mock_redis()
         em = _em(subject="Paz y salvo", body="Comprobante")
 
-        with patch("master_worker_outlook.generar_borrador_para_caso", new=AsyncMock()):
+        stack, _ = _patches_ac()
+        with stack:
             await procesar_atencion_cliente(
                 conn, r, em, TENANT_FF, _buzon(),
                 datetime(2026, 5, 27, tzinfo=timezone.utc), "OUTLOOK",
             )
 
-        # publish llamado con tipo='ATENCION_CLIENTE'
         publish_call = r.publish.call_args
         canal = publish_call.args[0]
         payload = json.loads(publish_call.args[1])
@@ -111,7 +138,8 @@ class TestProcesarAtencionCliente:
         r = _mock_redis()
         em = _em()
 
-        with patch("master_worker_outlook.generar_borrador_para_caso", new=AsyncMock()) as mock_borr:
+        stack, mock_borr = _patches_ac()
+        with stack:
             db_id = await procesar_atencion_cliente(
                 conn, r, em, TENANT_FF, _buzon(),
                 datetime(2026, 5, 27, tzinfo=timezone.utc), "OUTLOOK",
@@ -132,24 +160,19 @@ class TestProcesarAtencionCliente:
         conn.fetch = AsyncMock(return_value=[{"id": admin1}, {"id": admin2}])
         r = _mock_redis(rr_idx=1)  # idx 0 → admin1
 
-        with patch("master_worker_outlook.generar_borrador_para_caso", new=AsyncMock()):
+        stack, _ = _patches_ac()
+        with stack:
             await procesar_atencion_cliente(
                 conn, r, _em(), TENANT_FF, _buzon(),
                 datetime(2026, 5, 27, tzinfo=timezone.utc), "OUTLOOK",
             )
 
-        # Query de agentes incluye rol='admin'
         fetch_sql = conn.fetch.call_args.args[0]
         assert "'admin'" in fetch_sql
         assert "'analista'" in fetch_sql
         assert "'abogado'" in fetch_sql
-
-        # Round-robin key específico de AC (separado del de PQRS)
         r.incr.assert_called_once_with(f"rr_ac:{TENANT_FF}")
-
-        # asignado_a = admin1 (idx=0)
         insert_args = conn.fetchval.call_args.args[1:]
-        # posición de asignado_a depende del orden — buscamos uuid de admin1
         assert admin1 in insert_args
 
     @pytest.mark.asyncio
@@ -159,7 +182,8 @@ class TestProcesarAtencionCliente:
         r = _mock_redis()
         em = _em(subject="Adjunto comprobante", body="Para que actualicen")
 
-        with patch("master_worker_outlook.generar_borrador_para_caso", new=AsyncMock()) as mock_borr:
+        stack, mock_borr = _patches_ac()
+        with stack:
             await procesar_atencion_cliente(
                 conn, r, em, TENANT_FF, _buzon(),
                 datetime(2026, 5, 27, tzinfo=timezone.utc), "OUTLOOK",
@@ -178,14 +202,13 @@ class TestProcesarAtencionCliente:
         r = _mock_redis()
         em = _em()
 
-        with patch("master_worker_outlook.generar_borrador_para_caso",
-                   new=AsyncMock(side_effect=RuntimeError("boom"))):
+        stack, _ = _patches_ac(borrador_mock=AsyncMock(side_effect=RuntimeError("boom")))
+        with stack:
             db_id = await procesar_atencion_cliente(
                 conn, r, em, TENANT_FF, _buzon(),
                 datetime(2026, 5, 27, tzinfo=timezone.utc), "OUTLOOK",
             )
 
-        # Igual completó: db_id devuelto, SSE publicado, mark_as_read llamado
         assert db_id == nuevo_id
         r.publish.assert_called_once()
         em["prov_obj"].mark_as_read.assert_called_once()
@@ -197,11 +220,34 @@ class TestProcesarAtencionCliente:
         r = _mock_redis()
         em = _em(msg_id="msg-zoho")
 
-        with patch("master_worker_outlook.generar_borrador_para_caso", new=AsyncMock()):
+        stack, _ = _patches_ac()
+        with stack:
             await procesar_atencion_cliente(
                 conn, r, em, TENANT_FF, _buzon(),
                 datetime(2026, 5, 27, tzinfo=timezone.utc), "ZOHO",
             )
 
-        # ZOHO: mark_as_read(msg_id) — 1 argumento
         em["prov_obj"].mark_as_read.assert_called_once_with("msg-zoho")
+
+    # bug_005 fix tests: spam check skips processing
+    @pytest.mark.asyncio
+    async def test_spam_email_no_se_procesa(self):
+        """Email de noreply@ o newsletter@ → return None sin INSERT ni SSE."""
+        conn = _mock_conn(insert_returns=uuid.uuid4())
+        r = _mock_redis()
+        em = _em(sender="noreply@dhl.com", subject="Comprobante de envío DHL")
+
+        # NO _patches_ac → usamos es_spam REAL (debe matchear noreply@)
+        with patch("master_worker_outlook.detectar_problematica_dinamica", new=AsyncMock()), \
+             patch("master_worker_outlook._lookup_cedula_historica", new=AsyncMock()), \
+             patch("master_worker_outlook.generar_borrador_para_caso", new=AsyncMock()) as mock_borr:
+            db_id = await procesar_atencion_cliente(
+                conn, r, em, TENANT_FF, _buzon(),
+                datetime(2026, 5, 27, tzinfo=timezone.utc), "OUTLOOK",
+            )
+
+        assert db_id is None
+        conn.fetchval.assert_not_called()  # no INSERT
+        r.publish.assert_not_called()  # no SSE
+        mock_borr.assert_not_called()
+        em["prov_obj"].mark_as_read.assert_called_once()  # sí marca como leído

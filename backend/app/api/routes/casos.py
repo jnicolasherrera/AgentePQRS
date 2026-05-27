@@ -824,9 +824,17 @@ async def aprobar_lote(
                             cuerpo=caso["borrador_respuesta"],
                             fecha=now,
                         ).encode("utf-8")
-                        # Adjuntos en formato dict con bytes
+                        # bug_020B fix: para el ARCHIVO histórico SP queremos
+                        # los adjuntos ORIGINALES del mail entrante (es_reply=FALSE),
+                        # NO los uploads del admin para la respuesta (es_reply=TRUE
+                        # que ya están en adj_rows arriba para el envío Zoho).
+                        adj_orig_rows = await conn.fetch(
+                            "SELECT storage_path, nombre_archivo, content_type "
+                            "FROM pqrs_adjuntos WHERE caso_id=$1 AND es_reply=FALSE",
+                            caso["id"],
+                        )
                         adj_para_sp = []
-                        for ar in adj_rows:
+                        for ar in adj_orig_rows:
                             content_bytes = download_file(ar["storage_path"])
                             if content_bytes:
                                 adj_para_sp.append({

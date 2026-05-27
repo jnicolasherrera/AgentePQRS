@@ -3,8 +3,33 @@ import requests
 from datetime import datetime, timedelta
 import logging
 import os
+import re
 
 logger = logging.getLogger(__name__)
+
+
+# bug_002 fix (ultrareview #11): sanitización de nombres de adjuntos
+# antes de archivar en SharePoint. Previene:
+# - overwrite de mail_original.html / respuesta.html (audit del sistema).
+# - path traversal con "/" o "\" o "..".
+_SP_RESERVED_NAMES = {"mail_original.html", "respuesta.html"}
+
+
+def _sanitize_adjunto_name(nombre):
+    """Devuelve un filename seguro para subir bajo {cedula}_{fecha}/."""
+    if not nombre or not str(nombre).strip():
+        return "adjunto.bin"
+    # Solo basename: descarta cualquier path traversal (/ o \).
+    raw = os.path.basename(str(nombre)).replace("\\", "_").strip()
+    # Rechazar leading dot (oculta archivo) y residuos vacíos.
+    if not raw or raw.startswith("."):
+        return "adjunto.bin"
+    # Si colisiona con nombre del sistema, prefijar.
+    if raw.lower() in _SP_RESERVED_NAMES:
+        raw = f"adjunto_{raw}"
+    # Whitelist: alfanumérico + . _ - espacios → todo lo demás a _
+    safe = re.sub(r"[^A-Za-z0-9._\- ]", "_", raw)
+    return safe[:200]  # cap a 200 chars (SP soporta más, no necesario)
 
 class SharePointEngineV2:
     GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
@@ -142,9 +167,10 @@ class SharePointEngineV2:
             drive_id, f"{carpeta_caso}/respuesta.html",
             respuesta_html, "text/html; charset=utf-8",
         )
-        # 3) adjuntos
+        # 3) adjuntos — sanitizar nombre (bug_002 fix: prevenir path traversal
+        # y overwrite de los archivos de sistema mail_original.html / respuesta.html).
         for adj in (adjuntos or []):
-            nombre = adj.get("nombre_archivo") or "adjunto.bin"
+            nombre = _sanitize_adjunto_name(adj.get("nombre_archivo"))
             content = adj.get("content_bytes") or b""
             ctype = adj.get("content_type") or "application/octet-stream"
             if content:

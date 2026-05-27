@@ -10,7 +10,33 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.sharepoint_engine import SharePointEngineV2
+from app.services.sharepoint_engine import SharePointEngineV2, _sanitize_adjunto_name
+
+
+# bug_002 fix tests (ultrareview #11): sanitización de nombres de adjunto.
+class TestSanitizeAdjuntoName:
+    @pytest.mark.parametrize("raw,expected", [
+        ("factura.pdf",              "factura.pdf"),
+        ("doc con espacios.pdf",     "doc con espacios.pdf"),
+        ("respuesta.html",           "adjunto_respuesta.html"),    # reserved
+        ("MAIL_ORIGINAL.HTML",       "adjunto_MAIL_ORIGINAL.HTML"), # reserved case-insensitive
+        ("../leak.pdf",              "leak.pdf"),                    # basename strips ..
+        ("../../etc/passwd",         "passwd"),
+        ("subdir/file.pdf",          "file.pdf"),                    # strip path
+        (r"folder\file.pdf",         "folder_file.pdf"),             # backslash → _
+        (".hidden",                  "adjunto.bin"),                 # leading dot
+        ("",                         "adjunto.bin"),                 # empty
+        (None,                       "adjunto.bin"),                 # None
+        ("   ",                      "adjunto.bin"),                 # whitespace
+        ("a"*250 + ".pdf",           ("a"*200)[:200]),               # truncate 200
+        ("file<>:|?*.pdf",           "file______.pdf"),              # whitelist
+    ])
+    def test_sanitize(self, raw, expected):
+        result = _sanitize_adjunto_name(raw)
+        if "a"*100 in str(raw or ""):
+            assert len(result) <= 200
+        else:
+            assert result == expected
 
 
 def _engine_con_token():

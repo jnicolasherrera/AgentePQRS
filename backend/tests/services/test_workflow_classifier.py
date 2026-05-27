@@ -13,16 +13,35 @@ class TestDomainsJudiciales:
     @pytest.mark.parametrize("sender", [
         "juzgado05civil@ramajudicial.gov.co",
         "secretaria@cendoj.ramajudicial.gov.co",
-        "notif@juzgado12.gov",
+        "notif@juzgado12.gov.co",
         "tribunal-sup@tribunal.gov.co",
+        "x@consejodeestado.gov.co",
+        "x@cortesuprema.gov.co",
+        "y@subdom.ramajudicial.gov.co",
     ])
     def test_sender_judicial_siempre_pqrs(self, sender):
-        # Texto sin keywords legales — igual debe ir a PQRS
         assert clasificar_workflow(
-            asunto="Solicito paz y salvo",  # keyword AC fuerte
-            cuerpo="Necesito mi certificado de cancelación",  # otra AC
+            asunto="Solicito paz y salvo",
+            cuerpo="Necesito mi certificado de cancelación",
             sender=sender,
         ) == "PQRS"
+
+    # bug_021 fix tests (ultrareview #11)
+    @pytest.mark.parametrize("sender", [
+        "reservas@juzgadodelapaz.example",       # bar/restaurante
+        "info@tribunalbar.com",                  # nombre comercial
+        "noreply@jurisdiccionlibre.example",     # NGO
+        "x@notjuzgado.example",                  # contains pero no empieza
+    ])
+    def test_sender_no_judicial_no_fuerza_pqrs(self, sender):
+        """Dominios que CONTIENEN palabras judiciales pero no son juzgados
+        reales NO deben forzar PQRS — bug_021 fix."""
+        result = clasificar_workflow(
+            asunto="Necesito paz y salvo",
+            cuerpo="Adjunto comprobante de pago",
+            sender=sender,
+        )
+        assert result == "ATENCION_CLIENTE"
 
 
 class TestPqrsKeywords:
