@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/store/authStore";
 import type { Periodo } from "@/lib/casos-constants";
+import type { WorkflowType } from "@/types/api";
 
 export interface TendenciaPoint {
   fecha: string;
@@ -14,19 +15,25 @@ export interface TendenciaPoint {
 /**
  * Hook que trae la serie temporal de ingresos/cerrados/tutelas por día.
  * Espeja el patrón de useDashboardStats (dedup + cleanup).
- * Cancela request en cleanup si cambia período o cliente (evita race).
+ * Cancela request en cleanup si cambia período, cliente o workflow (evita race).
  */
-export function useTendencia(periodo: Periodo, selectedClienteId?: string, enabled = true) {
+export function useTendencia(
+  periodo: Periodo,
+  selectedClienteId?: string,
+  enabled = true,
+  workflow?: WorkflowType,  // undefined = ambos workflows (sprint FF bloque 12)
+) {
   const [data, setData] = useState<TendenciaPoint[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!enabled) return;
-    const base = `/stats/rendimiento/tendencia?periodo=${periodo}`;
-    const url = selectedClienteId ? `${base}&cliente_id=${selectedClienteId}` : base;
+    const params = new URLSearchParams({ periodo });
+    if (selectedClienteId) params.set("cliente_id", selectedClienteId);
+    if (workflow) params.set("workflow", workflow);
     const ctrl = new AbortController();
     setLoading(true);
-    api.get<TendenciaPoint[]>(url, { signal: ctrl.signal })
+    api.get<TendenciaPoint[]>(`/stats/rendimiento/tendencia?${params.toString()}`, { signal: ctrl.signal })
       .then((r) => { setData(r.data || []); setLoading(false); })
       .catch((e) => {
         if (e?.name !== "CanceledError" && e?.code !== "ERR_CANCELED") {
@@ -34,7 +41,7 @@ export function useTendencia(periodo: Periodo, selectedClienteId?: string, enabl
         }
       });
     return () => ctrl.abort();
-  }, [enabled, periodo, selectedClienteId]);
+  }, [enabled, periodo, selectedClienteId, workflow]);
 
   return { data, loading };
 }
