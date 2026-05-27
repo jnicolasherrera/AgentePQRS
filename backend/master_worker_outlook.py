@@ -82,6 +82,13 @@ from app.services.workflow_classifier import clasificar_workflow
 from app.services.plantilla_engine import detectar_problematica_dinamica
 from app.constants import TENANT_ABOGADOS_RECOVERY
 
+# Sprint FF hotfix 2026-05-27: ATENCION_CLIENTE solo aplica a FlexFintech.
+# Recovery + Demo + cualquier otro tenant SIEMPRE va por flow PQRS legal,
+# independiente del contenido. Esto evita que casos Recovery con keywords
+# como "comprobante de pago" o "paz y salvo" en el cuerpo se desvíen al
+# flow simplificado AC (que NO genera borrador con Claude si tipo_caso=None).
+TENANT_FLEXFINTECH = "f7e8d9c0-b1a2-3456-7890-123456abcdef"
+
 _RE_PREFIX = re.compile(r'^(?:(?:[a-z]{1,4}\s*-\s*)+)?(?:re|fw|fwd|rv|rta|r)\s*:\s*', re.IGNORECASE)
 _RE_RADICADO = re.compile(r'PQRS-\d{4}-[A-F0-9]{6,8}', re.IGNORECASE)
 
@@ -466,10 +473,16 @@ async def master_worker():
                         continue
 
                     # ─── Dispatcher PQRS vs ATENCION_CLIENTE (sprint FF bloque 3) ───
-                    workflow = clasificar_workflow(
-                        em['subject'], em['body'], em['sender'],
-                        default_workflow=default_workflow,
-                    )
+                    # Hotfix 2026-05-27: AC SOLO para FlexFintech (decisión del
+                    # cliente). Otros tenants siempre PQRS, no importa el contenido.
+                    if str(c_id) == TENANT_FLEXFINTECH:
+                        workflow = clasificar_workflow(
+                            em['subject'], em['body'], em['sender'],
+                            default_workflow=default_workflow,
+                        )
+                    else:
+                        workflow = 'PQRS'
+
                     if workflow == 'ATENCION_CLIENTE':
                         await procesar_atencion_cliente(conn, r, em, c_id, b, dt, prov)
                         continue
