@@ -102,8 +102,55 @@ async def change_password(
     Ruta para que el usuario cambie su contraseña obligatoriamente.
     """
     new_hash = get_password_hash(data.new_password)
-    
+
     query = "UPDATE usuarios SET password_hash = $1, debe_cambiar_password = FALSE WHERE id = $2"
     await conn.execute(query, new_hash, uuid.UUID(current_user.usuario_id))
-    
+
     return {"status": "success", "message": "Contraseña actualizada correctamente"}
+
+
+@router.get("/me")
+async def me(
+    current_user: Any = Depends(get_current_user),
+    conn = Depends(get_db_connection),
+) -> Dict[str, Any]:
+    """Info del usuario autenticado + tenant + workflows disponibles.
+
+    Sprint FlexFintech 2026-05-27 — bloque 7. El frontend lo usa al boot para
+    decidir si mostrar el filtro PQRS|AC en Bandeja y la sección AC en
+    Dashboard (solo para tenants que tienen buzones con ATENCION_CLIENTE).
+
+    `workflows_disponibles` se calcula como DISTINCT tipo_workflow de los
+    config_buzones is_active=TRUE del tenant. Para super_admin (sin tenant
+    propio) devuelve el set global ["PQRS", "ATENCION_CLIENTE"] si hay buzones
+    AC en cualquier tenant, sino solo ["PQRS"]. Default seguro: ["PQRS"].
+    """
+    es_super = current_user.role == 'super_admin'
+
+    if es_super:
+        rows = await conn.fetch(
+            "SELECT DISTINCT tipo_workflow FROM config_buzones WHERE is_active = TRUE"
+        )
+        tenant_info = None
+    else:
+        rows = await conn.fetch(
+            "SELECT DISTINCT tipo_workflow FROM config_buzones "
+            "WHERE cliente_id = $1::uuid AND is_active = TRUE",
+            uuid.UUID(current_user.tenant_uuid),
+        )
+        t = await conn.fetchrow(
+            "SELECT id, nombre FROM clientes_tenant WHERE id = $1::uuid",
+            uuid.UUID(current_user.tenant_uuid),
+        )
+        tenant_info = {"id": str(t["id"]), "nombre": t["nombre"]} if t else None
+
+    workflows = sorted({r["tipo_workflow"] for r in rows}) or ["PQRS"]
+
+    return {
+        "usuario_id": current_user.usuario_id,
+        "email": current_user.email,
+        "nombre": current_user.nombre,
+        "rol": current_user.role,
+        "tenant": tenant_info,
+        "workflows_disponibles": workflows,
+    }

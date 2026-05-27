@@ -112,6 +112,7 @@ async def listar_casos_admin(
     estado: Optional[str] = None,
     asignado_a: Optional[str] = None,
     es_pqrs: Optional[bool] = None,
+    workflow: Optional[str] = None,  # PQRS | ATENCION_CLIENTE | None=ambos (sprint FF bloque 7)
     q: Optional[str] = None,
     sort_by: Optional[str] = None,
     sort_dir: Optional[str] = None,
@@ -121,6 +122,8 @@ async def listar_casos_admin(
 ) -> Dict[str, Any]:
     if current_user.role not in ['admin', 'super_admin']:
         raise HTTPException(status_code=403, detail="Solo administradores")
+    if workflow is not None and workflow not in ("PQRS", "ATENCION_CLIENTE"):
+        raise HTTPException(status_code=400, detail="workflow inválido")
 
     es_super = current_user.role == 'super_admin'
     filtros = ["1=1"]
@@ -152,6 +155,10 @@ async def listar_casos_admin(
         filtros.append(f"c.es_pqrs = ${idx}")
         params.append(es_pqrs)
         idx += 1
+    if workflow:
+        filtros.append(f"c.tipo_workflow = ${idx}")
+        params.append(workflow)
+        idx += 1
     if q:
         filtros.append(f"(c.asunto ILIKE ${idx} OR c.email_origen ILIKE ${idx})")
         params.append(f"%{q}%")
@@ -169,7 +176,7 @@ async def listar_casos_admin(
     rows = await conn.fetch(
         f"""SELECT c.id, c.numero_radicado, c.asunto, c.email_origen, c.tipo_caso,
                c.estado, c.nivel_prioridad, c.fecha_recibido, c.fecha_vencimiento,
-               c.es_pqrs, c.acuse_enviado,
+               c.es_pqrs, c.acuse_enviado, c.tipo_workflow, c.problematica_detectada,
                u.nombre AS asignado_nombre, u.email AS asignado_email
             FROM pqrs_casos c
             LEFT JOIN usuarios u ON u.id = c.asignado_a
@@ -186,6 +193,8 @@ async def listar_casos_admin(
             "asunto": r["asunto"],
             "email_origen": r["email_origen"],
             "tipo_caso": r["tipo_caso"],
+            "tipo_workflow": r["tipo_workflow"],
+            "problematica_detectada": r["problematica_detectada"],
             "estado": r["estado"],
             "nivel_prioridad": r["nivel_prioridad"],
             "fecha_recibido": r["fecha_recibido"].isoformat() if r["fecha_recibido"] else None,
