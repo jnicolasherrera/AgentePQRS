@@ -174,13 +174,25 @@ def detectar_problematica(asunto: str, cuerpo: str) -> Optional[str]:
     return None
 
 
-async def obtener_plantilla(conn: asyncpg.Connection, tenant_id: str, problematica: str) -> Optional[dict]:
-    """Busca la plantilla activa para el tenant y problemática dados."""
+async def obtener_plantilla(
+    conn: asyncpg.Connection,
+    tenant_id: str,
+    problematica: str,
+    *,
+    tipo_workflow: str = "PQRS",
+) -> Optional[dict]:
+    """Busca la plantilla activa para el tenant + problemática + workflow.
+
+    ``tipo_workflow`` separa plantillas legales (PQRS) de operativas
+    (ATENCION_CLIENTE). Default 'PQRS' para mantener backward-compat con
+    callers viejos. Sprint FlexFintech 2026-05-27.
+    """
     row = await conn.fetchrow(
         """SELECT id, cuerpo, contexto FROM plantillas_respuesta
            WHERE cliente_id = $1 AND problematica = $2 AND is_active = TRUE
+             AND tipo_workflow = $3
            LIMIT 1""",
-        uuid.UUID(tenant_id), problematica,
+        uuid.UUID(tenant_id), problematica, tipo_workflow,
     )
     return dict(row) if row else None
 
