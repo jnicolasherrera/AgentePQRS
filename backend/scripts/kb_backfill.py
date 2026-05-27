@@ -137,8 +137,20 @@ async def _recoger_casos_enviados(
     conn: asyncpg.Connection,
     tenant_filter: str | None,
     limit: int | None,
+    skip_existing: bool = False,
 ) -> list[dict[str, Any]]:
-    """Casos cerrados y enviados con borrador útil (>100 chars)."""
+    """Casos cerrados y enviados con borrador útil (>100 chars).
+
+    skip_existing=True excluye los ya indexados en respuestas_kb (no
+    re-embedea — evita gastar tokens Voyage en idempotencia).
+    """
+    skip_clause = (
+        "AND NOT EXISTS (SELECT 1 FROM respuestas_kb kb "
+        "WHERE kb.cliente_id = pqrs_casos.cliente_id "
+        "AND kb.source_type='caso_enviado' "
+        "AND kb.source_id = pqrs_casos.id::text)"
+        if skip_existing else ""
+    )
     q = """
         SELECT id::text AS source_id, cliente_id::text, asunto, borrador_respuesta,
                problematica_detectada, tipo_caso, enviado_at
@@ -148,10 +160,12 @@ async def _recoger_casos_enviados(
           AND borrador_respuesta IS NOT NULL
           AND length(borrador_respuesta) > 100
           {tenant_where}
+          {skip_clause}
         ORDER BY enviado_at DESC
         {limit_clause}
     """.format(
         tenant_where=("AND cliente_id = $1::uuid" if tenant_filter else ""),
+        skip_clause=skip_clause,
         limit_clause=(f"LIMIT {int(limit)}" if limit else ""),
     )
     rows = await (conn.fetch(q, tenant_filter) if tenant_filter else conn.fetch(q))
@@ -415,12 +429,14 @@ async def _backfill_source(
     tenant_filter: str | None,
     limit: int | None,
     dry_run: bool,
+    skip_existing: bool = False,
 ) -> None:
     t0 = time.time()
-    logger.info("─── source=%s tenant=%s limit=%s ───", source, tenant_filter, limit)
+    logger.info("─── source=%s tenant=%s limit=%s skip_existing=%s ───",
+                source, tenant_filter, limit, skip_existing)
 
     if source == "caso_enviado":
-        docs = await _recoger_casos_enviados(conn, tenant_filter, limit)
+        docs = await _recoger_casos_enviados(conn, tenant_filter, limit, skip_existing)
     elif source == "plantilla":
         docs = await _recoger_plantillas(conn, tenant_filter, limit)
     elif source == "normativa":
@@ -512,6 +528,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 tenant_filter=args.tenant,
                 limit=args.limit,
                 dry_run=args.dry_run,
+                skip_existing=args.skip_existing,
             )
     finally:
         await conn.close()
@@ -527,6 +544,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--limit", type=int, help="top N por source (para tests)")
     p.add_argument("--dry-run", action="store_true",
                    help="No llama API ni inserta; sólo lista qué haría")
+    p.add_argument("--skip-existing", action="store_true",
+                   help="Solo procesa source_id que NO están ya en respuestas_kb "
+                        "(idempotencia eficiente — no re-embedea).")
     return p.parse_args()
 
 
