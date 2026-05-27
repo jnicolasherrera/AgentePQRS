@@ -56,17 +56,30 @@ _PROMPTS_TIPO = {
         "descrita, indicando que fue radicada y será atendida dentro de los 15 días hábiles. "
         "Usa lenguaje formal colombiano."
     ),
+    # Sprint FF 2026-05-27: prompt dedicado para consultas operativas
+    # de atención al cliente (no legal). Tono cordial, sin lenguaje jurídico,
+    # foco en próximos pasos prácticos.
+    "ATENCION_CLIENTE": (
+        "Eres agente de atención al cliente de FlexFintech (entidad financiera colombiana). "
+        "Recibiste una consulta operativa de un cliente. Redacta una respuesta cordial, "
+        "clara y profesional, sin usar lenguaje legal complicado. "
+        "Explica los próximos pasos concretos que el cliente debe seguir o lo que vas a "
+        "hacer por él. Si necesitás información adicional (cédula, comprobante, etc.) "
+        "pedíselo amablemente. Cerrá ofreciendo seguir disponible para cualquier duda. "
+        "Máximo 250 palabras."
+    ),
 }
 
 
 async def generar_borrador_con_ia(
     asunto: str,
     cuerpo: str,
-    tipo_caso: str,
+    tipo_caso: Optional[str],
     nombre_cliente: Optional[str],
     *,
     conn: Optional[asyncpg.Connection] = None,
     tenant_id: Optional[str] = None,
+    tipo_workflow: str = "PQRS",
 ) -> Optional[str]:
     """Genera borrador con Claude Haiku cuando no hay plantilla disponible.
 
@@ -106,7 +119,26 @@ async def generar_borrador_con_ia(
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=api_key)
         saludo = f"dirigida a {nombre_cliente}" if nombre_cliente else ""
-        system = _PROMPTS_TIPO.get(tipo_caso, _PROMPTS_TIPO["SOLICITUD"])
+
+        # Selección de system prompt:
+        # - ATENCION_CLIENTE → prompt operativo (no legal).
+        # - Legacy PQRS: usa el de tipo_caso (TUTELA/PETICION/QUEJA/RECLAMO/SOLICITUD).
+        # - Fallback: SOLICITUD (lo más genérico legal).
+        if tipo_workflow == "ATENCION_CLIENTE":
+            system = _PROMPTS_TIPO["ATENCION_CLIENTE"]
+            instrucciones_finales = (
+                "La respuesta debe tener: saludo cordial al cliente, "
+                "reconocimiento de su consulta, pasos concretos a seguir o "
+                "qué vamos a hacer por él, pedido de info adicional si hace "
+                "falta (cédula/comprobante), cierre amable. Máximo 250 palabras."
+            )
+        else:
+            system = _PROMPTS_TIPO.get(tipo_caso, _PROMPTS_TIPO["SOLICITUD"])
+            instrucciones_finales = (
+                "La respuesta debe tener: saludo formal, reconocimiento del caso, "
+                "fundamento legal aplicable, plazo de respuesta definitiva y despedida. "
+                "Máximo 300 palabras."
+            )
 
         # Inyectar el contexto RAG entre el asunto y el cuerpo si existe.
         bloque_contexto = (
@@ -121,9 +153,7 @@ async def generar_borrador_con_ia(
             f"Asunto: {asunto}\n\n"
             f"Contenido del correo:\n{cuerpo[:1500]}\n"
             f"{bloque_contexto}"
-            "La respuesta debe tener: saludo formal, reconocimiento del caso, "
-            "fundamento legal aplicable, plazo de respuesta definitiva y despedida. "
-            "Máximo 300 palabras."
+            f"{instrucciones_finales}"
         )
         resp = await client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -345,11 +375,16 @@ async def generar_borrador_para_caso(
         estado   = "PENDIENTE"
         pid      = plantilla["id"]
     else:
-        # Fallback: Claude genera un borrador legal genérico, ahora con RAG.
+        # Fallback: Claude SIEMPRE genera borrador, aunque no haya plantilla
+        # ni tipo_caso. Para ATENCION_CLIENTE usa prompt operativo dedicado;
+        # para PQRS sin tipo_caso clasificado, cae a SOLICITUD genérico.
+        # (Fix 2026-05-27: antes solo llamaba si tipo_caso truthy → casos AC
+        # con problemática Recovery quedaban SIN_PLANTILLA + sin respuesta.)
         borrador = await generar_borrador_con_ia(
-            asunto, cuerpo, tipo_caso or "SOLICITUD", nombre_cliente,
+            asunto, cuerpo, tipo_caso, nombre_cliente,
             conn=conn, tenant_id=tenant_id,
-        ) if tipo_caso else None
+            tipo_workflow=tipo_workflow,
+        )
         estado   = "PENDIENTE" if borrador else "SIN_PLANTILLA"
         pid      = None
         rag_docs_usados = getattr(generar_borrador_con_ia, "_last_rag_docs", []) or []
