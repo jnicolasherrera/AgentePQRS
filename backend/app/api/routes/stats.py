@@ -11,12 +11,20 @@ logger = logging.getLogger("STATS")
 
 @router.get("/dashboard")
 async def get_dashboard_stats(
+    periodo: str = "semana",
     cliente_id: Optional[str] = None,
     current_user: UserInToken = Depends(get_current_user),
     conn = Depends(get_db_connection)
 ) -> Dict[str, Any]:
     es_super = current_user.role == 'super_admin'
     es_abogado = current_user.role == 'analista'
+
+    # Período del dashboard: aplica al WHERE base => TODO se filtra por el rango
+    # (activos creados en el período, vencidos del período, ingresos del período…).
+    # `por_vencer` sigue siendo prospectivo (vence ≤48h) pero contado sobre casos
+    # del período. Mismo contrato que /rendimiento/tendencia.
+    intervalos = {"dia": 1, "semana": 7, "mes": 30}
+    dias = intervalos.get(periodo, 7)
 
     # Determinar el tenant a filtrar
     if es_super and cliente_id:
@@ -27,7 +35,7 @@ async def get_dashboard_stats(
         target_tenant = None  # super_admin sin filtro: ve todo
 
     params = []
-    filtros = ["1=1"]
+    filtros = [f"fecha_recibido >= CURRENT_DATE - INTERVAL '{dias} days'"]
     if target_tenant:
         params.append(uuid.UUID(target_tenant))
         filtros.append(f"cliente_id = ${len(params)}::uuid")
@@ -48,7 +56,7 @@ async def get_dashboard_stats(
           COUNT(*) FILTER (WHERE estado='CERRADO')                       AS cerrados,
           COUNT(*) FILTER (WHERE estado IN ('ABIERTO','EN_PROCESO'))     AS activos,
           COUNT(*) FILTER (WHERE fecha_recibido >= CURRENT_DATE)         AS casos_hoy,
-          COUNT(*) FILTER (WHERE fecha_recibido >= CURRENT_DATE - INTERVAL '7 days') AS casos_semana,
+          COUNT(*)                                                       AS casos_periodo,
           COUNT(*) FILTER (WHERE fecha_vencimiento < NOW() AND estado != 'CERRADO') AS vencidos,
           COUNT(*) FILTER (WHERE fecha_vencimiento >= NOW()
                             AND fecha_vencimiento <= NOW() + INTERVAL '48 hours'
@@ -56,11 +64,9 @@ async def get_dashboard_stats(
           COUNT(*) FILTER (WHERE asignado_a IS NOT NULL)                 AS asignados,
           COUNT(*) FILTER (WHERE acuse_enviado = TRUE)                   AS con_acuse,
           COUNT(*) FILTER (WHERE estado IN ('CONTESTADO','CERRADO'))     AS respondidos,
-          -- Breakdown PQR vs Tutela (últimos 7 días = "lo que entró al correo")
-          COUNT(*) FILTER (WHERE tipo_caso IN ('PETICION','QUEJA','RECLAMO','SOLICITUD','SUGERENCIA')
-                            AND fecha_recibido >= CURRENT_DATE - INTERVAL '7 days') AS ingresos_pqr_semana,
-          COUNT(*) FILTER (WHERE tipo_caso = 'TUTELA'
-                            AND fecha_recibido >= CURRENT_DATE - INTERVAL '7 days') AS ingresos_tutela_semana,
+          -- Breakdown PQR vs Tutela del período (WHERE base ya filtró fecha_recibido)
+          COUNT(*) FILTER (WHERE tipo_caso IN ('PETICION','QUEJA','RECLAMO','SOLICITUD','SUGERENCIA')) AS ingresos_pqr,
+          COUNT(*) FILTER (WHERE tipo_caso = 'TUTELA')                   AS ingresos_tutela,
           -- Pulso TUTELAS (SLA legal 10 días, tracking separado)
           COUNT(*) FILTER (WHERE tipo_caso='TUTELA' AND estado IN ('ABIERTO','EN_PROCESO')) AS tutelas_activas,
           COUNT(*) FILTER (WHERE tipo_caso='TUTELA' AND fecha_vencimiento < NOW() AND estado != 'CERRADO') AS tutelas_vencidas,
@@ -81,14 +87,14 @@ async def get_dashboard_stats(
     cerrados           = kpi['cerrados']
     activos            = kpi['activos']
     casos_hoy          = kpi['casos_hoy']
-    casos_semana       = kpi['casos_semana']
+    casos_periodo      = kpi['casos_periodo']
     vencidos           = kpi['vencidos']
     por_vencer         = kpi['por_vencer']
     asignados          = kpi['asignados']
     con_acuse          = kpi['con_acuse']
     respondidos        = kpi['respondidos']
-    ingresos_pqr       = kpi['ingresos_pqr_semana']
-    ingresos_tutela    = kpi['ingresos_tutela_semana']
+    ingresos_pqr       = kpi['ingresos_pqr']
+    ingresos_tutela    = kpi['ingresos_tutela']
     tutelas_activas    = kpi['tutelas_activas']
     tutelas_vencidas   = kpi['tutelas_vencidas']
     tutelas_por_vencer = kpi['tutelas_por_vencer']
@@ -131,6 +137,8 @@ async def get_dashboard_stats(
     tasa_escalamiento = round((tutelas_escaladas / tutelas_total * 100), 1) if tutelas_total > 0 else 0
 
     return {
+        "periodo": periodo,
+        "dias": dias,
         "kpis": {
             "total_casos": total_casos,
             "casos_criticos": total_criticos,
@@ -140,11 +148,18 @@ async def get_dashboard_stats(
             "contestados": contestados,
             "cerrados": cerrados,
             "casos_hoy": casos_hoy,
-            "casos_semana": casos_semana,
+            "casos_periodo": casos_periodo,
+            "casos_semana": casos_periodo,  # legacy: clientes viejos esperan casos_semana
             "vencidos": vencidos,
             "por_vencer": por_vencer,
             "activos": activos
         },
+        "ingresos_periodo": {
+            "pqr": ingresos_pqr,
+            "tutela": ingresos_tutela,
+            "total": ingresos_pqr + ingresos_tutela,
+        },
+        # legacy alias: clientes que aún leen ingresos_semana
         "ingresos_semana": {
             "pqr": ingresos_pqr,
             "tutela": ingresos_tutela,

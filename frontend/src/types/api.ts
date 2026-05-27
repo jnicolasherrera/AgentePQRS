@@ -90,7 +90,11 @@ export interface Trazabilidad {
 }
 
 export interface DashboardStats {
+  periodo?: "dia" | "semana" | "mes";
+  dias?: number;
   kpis: KPIs;
+  ingresos_periodo?: IngresosSemana;
+  /** @deprecated usar ingresos_periodo */
   ingresos_semana?: IngresosSemana;
   tutelas?: PulsoTutelas;
   trazabilidad: Trazabilidad;
