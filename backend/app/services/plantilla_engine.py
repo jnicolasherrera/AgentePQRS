@@ -253,18 +253,28 @@ async def generar_borrador_para_caso(
     radicado: Optional[str] = None,
     email_origen: Optional[str] = None,
     fecha_vencimiento: Optional[str] = None,
+    *,
+    tipo_workflow: str = "PQRS",
 ) -> dict:
     """
     Detecta problemática, obtiene plantilla, personaliza borrador y actualiza pqrs_casos.
     Si no hay plantilla específica, intenta fallback genérico por tipo_caso.
+
+    ``tipo_workflow`` (PQRS | ATENCION_CLIENTE) filtra plantillas para que no
+    se mezclen las legales con las operativas. Default 'PQRS' = backward-compat.
+
     Retorna dict con borrador_respuesta, borrador_estado, problematica_detectada.
     """
     problematica = detectar_problematica(asunto, cuerpo)
-    plantilla    = await obtener_plantilla(conn, tenant_id, problematica) if problematica else None
+    plantilla    = await obtener_plantilla(
+        conn, tenant_id, problematica, tipo_workflow=tipo_workflow,
+    ) if problematica else None
 
     if not plantilla and tipo_caso:
         slug_generico = f"GENERICO_{tipo_caso.upper()}"
-        plantilla = await obtener_plantilla(conn, tenant_id, slug_generico)
+        plantilla = await obtener_plantilla(
+            conn, tenant_id, slug_generico, tipo_workflow=tipo_workflow,
+        )
 
     rag_docs_usados: list[dict] = []
     if plantilla:

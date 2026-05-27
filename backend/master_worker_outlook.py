@@ -78,6 +78,8 @@ from app.services.zoho_engine import ZohoServiceV2
 from app.services.sharepoint_engine import SharePointEngineV2
 from app.services.plantilla_engine import generar_borrador_para_caso
 from app.services.clasificador import parece_pqrs, es_remitente_juzgado
+from app.services.workflow_classifier import clasificar_workflow
+from app.services.plantilla_engine import detectar_problematica
 from app.constants import TENANT_ABOGADOS_RECOVERY
 
 _RE_PREFIX = re.compile(r'^(?:(?:[a-z]{1,4}\s*-\s*)+)?(?:re|fw|fwd|rv|rta|r)\s*:\s*', re.IGNORECASE)
@@ -224,6 +226,86 @@ async def _ensure_alive_connection(conn, dsn: str, force: bool = False):
     return conn, False
 
 
+async def procesar_atencion_cliente(conn, r, em, c_id, b, dt, prov):
+    """Flow simplificado para emails clasificados como ATENCION_CLIENTE
+    (consultas operativas, no PQRS legal).
+
+    Diferencias vs flow PQRS:
+    - No usa `clasificar_hibrido` (tipo_caso queda NULL).
+    - No calcula `fecha_vencimiento` con festivos CO (no hay plazo legal).
+    - No envía acuse de cortesía (DT-41 N/A).
+    - Round-robin incluye `admin` además de analista/abogado (FlexFintech
+      tiene solo admins activos hoy).
+    - Inserta `tipo_workflow='ATENCION_CLIENTE'` + `problematica_detectada`.
+    - Generación de borrador filtra plantillas por workflow=ATENCION_CLIENTE.
+
+    Sprint FlexFintech 2026-05-27 — bloque 3.
+    """
+    problematica = detectar_problematica(em['subject'], em['body'])
+
+    # Round-robin entre agentes (admin/analista/abogado activos)
+    agentes = await conn.fetch(
+        "SELECT id FROM usuarios WHERE cliente_id = $1 "
+        "AND rol IN ('admin','analista','abogado') AND is_active = TRUE "
+        "ORDER BY created_at ASC",
+        c_id,
+    )
+    asignado_a, fecha_asignacion = None, None
+    if agentes:
+        idx = int(await r.incr(f"rr_ac:{c_id}")) - 1
+        asignado_a = agentes[idx % len(agentes)]['id']
+        fecha_asignacion = dt
+
+    db_id = await conn.fetchval(
+        """INSERT INTO pqrs_casos
+              (cliente_id, email_origen, asunto, cuerpo, estado, nivel_prioridad,
+               fecha_recibido, tipo_workflow, problematica_detectada,
+               external_msg_id, asignado_a, fecha_asignacion)
+           VALUES ($1,$2,$3,$4,'ABIERTO','NORMAL',$5,'ATENCION_CLIENTE',$6,$7,$8,$9)
+           ON CONFLICT (cliente_id, external_msg_id) WHERE external_msg_id IS NOT NULL DO NOTHING
+           RETURNING id""",
+        c_id, em['sender'], em['subject'], em['body'], dt,
+        problematica, (em['id'] or '').strip() or None,
+        asignado_a, fecha_asignacion,
+    )
+    if not db_id:
+        logger.info(f"⏭️  AC email ya procesado: {(em['id'] or '')[:20]}")
+        return None
+
+    # Borrador con plantillas AC (filter en obtener_plantilla via tipo_workflow)
+    try:
+        await generar_borrador_para_caso(
+            conn, str(c_id), str(db_id),
+            em['subject'], em['body'][:1000],
+            nombre_cliente=None,
+            tipo_caso=None,
+            email_origen=em['sender'],
+            tipo_workflow='ATENCION_CLIENTE',
+        )
+    except Exception as e:
+        logger.warning(f"AC borrador falló para {db_id}: {e}")
+
+    # Mark as read (mismo patrón que PQRS)
+    try:
+        if prov == 'OUTLOOK':
+            em['prov_obj'].mark_as_read(em['email_buzon'], em['id'])
+        else:
+            em['prov_obj'].mark_as_read(em['id'])
+    except Exception as e:
+        logger.warning(f"AC mark_as_read falló: {e}")
+
+    # Publicar SSE — frontend distingue por campo `tipo`
+    notif = {
+        "id": str(db_id), "subject": em['subject'], "tenant_id": str(c_id),
+        "email": em['sender'], "tipo": "ATENCION_CLIENTE",
+        "problematica": problematica, "prioridad": "NORMAL",
+        "estado": "ABIERTO", "cliente_nombre": b.get('cliente_nombre') or "",
+    }
+    await r.publish("pqrs_stream_v2", json.dumps(notif))
+    logger.info(f"✅ AC caso inyectado [{prov}]: {db_id} (problematica={problematica})")
+    return db_id
+
+
 async def master_worker():
     logger.info("🚀 [MASTER WORKER V2.1] Híbrido: Outlook/Zoho + SharePoint Storage...")
     r = redis.from_url(REDIS_URL, decode_responses=True)
@@ -297,10 +379,36 @@ async def master_worker():
 
                 TIPOS_VALIDOS = {"TUTELA", "PETICION", "QUEJA", "RECLAMO", "SOLICITUD"}
 
+                # Cutoff y workflow default heredados del buzón (sprint FF bloque 3).
+                procesar_desde = b.get('procesar_desde')  # TIMESTAMPTZ o None
+                default_workflow = b.get('tipo_workflow') or 'PQRS'
+
                 for em in parsed_emails:
+                    # Parse fecha del email una vez (la usan filtro cutoff + INSERT).
+                    from datetime import timezone as _tz
+                    dt = pd.to_datetime(em['date']).to_pydatetime()
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=_tz.utc)
+
+                    # Cutoff: ignorar mails anteriores a procesar_desde (evita
+                    # reprocesar histórico al activar buzón nuevo / cambiar workflow).
+                    if procesar_desde and dt < procesar_desde:
+                        continue
+
                     # Respuesta de ciudadano a caso existente → seguimiento, no nuevo caso
                     if await _registrar_seguimiento(conn, em, c_id):
                         continue
+
+                    # ─── Dispatcher PQRS vs ATENCION_CLIENTE (sprint FF bloque 3) ───
+                    workflow = clasificar_workflow(
+                        em['subject'], em['body'], em['sender'],
+                        default_workflow=default_workflow,
+                    )
+                    if workflow == 'ATENCION_CLIENTE':
+                        await procesar_atencion_cliente(conn, r, em, c_id, b, dt, prov)
+                        continue
+
+                    # ─── Flow PQRS (legal — sin cambios) ───
                     if not parece_pqrs(em['subject'], em['body'], em['sender']):
                         logger.info(f"Ignorado (no es PQRS): {em['subject'][:60]}")
                         continue
@@ -308,10 +416,7 @@ async def master_worker():
                     if resultado.tipo.value not in TIPOS_VALIDOS:
                         logger.info(f"🚫 Descartado [{resultado.tipo.value}]: {em['subject'][:60]}")
                         continue
-                    from datetime import timezone as _tz
-                    dt = pd.to_datetime(em['date']).to_pydatetime()
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=_tz.utc)
+                    # dt ya calculado arriba (al inicio del loop). Calcular vencimiento:
                     venc = (pd.Timestamp(dt).tz_convert('UTC') + pd.offsets.CustomBusinessDay(n=resultado.plazo_dias)).to_pydatetime()
                     
                     # Round-robin: obtener analistas activos del tenant
@@ -402,6 +507,7 @@ async def master_worker():
                         tipo_caso=resultado.tipo.value,
                         radicado=caso_radicado,
                         email_origen=em['sender'],
+                        tipo_workflow='PQRS',  # explícito — flow legal
                     )
 
                     if em['attachments']:
