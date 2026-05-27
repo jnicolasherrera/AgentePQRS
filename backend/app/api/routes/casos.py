@@ -45,6 +45,54 @@ def _firma_html() -> str:
     return f'<br><img src="cid:{_FIRMA_CID}" style="max-width:560px;display:block;" alt="Firma" />'
 
 
+def _render_mail_html(asunto: str, cuerpo: str, sender: str, fecha) -> str:
+    """Render del mail original del cliente como HTML para archivado SP.
+
+    Sprint FlexFintech 2026-05-27 bloque 6 — decisión D5 (HTML, no .eml).
+    Usado por enviar-lote post-envío para archivar en SharePoint.
+    """
+    import html as _h
+    fecha_s = fecha.strftime("%Y-%m-%d %H:%M") if hasattr(fecha, "strftime") else str(fecha or "")
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<title>Mail original</title>"
+        "<style>body{font-family:Arial,sans-serif;max-width:780px;margin:20px auto;color:#222}"
+        "table{border-collapse:collapse;width:100%;margin-bottom:1em}"
+        "th,td{text-align:left;padding:6px 10px;border:1px solid #ddd;font-size:13px}"
+        "th{background:#f4f4f4;width:120px}"
+        ".cuerpo{white-space:pre-wrap;border:1px solid #ddd;padding:12px;background:#fafafa}"
+        "</style></head><body>"
+        "<h2>Mail original</h2>"
+        f"<table><tr><th>De</th><td>{_h.escape(sender or '')}</td></tr>"
+        f"<tr><th>Fecha</th><td>{_h.escape(fecha_s)}</td></tr>"
+        f"<tr><th>Asunto</th><td>{_h.escape(asunto or '')}</td></tr></table>"
+        f"<div class='cuerpo'>{_h.escape(cuerpo or '')}</div>"
+        "</body></html>"
+    )
+
+
+def _render_respuesta_html(subject: str, destinatario: str, cuerpo: str, fecha) -> str:
+    """Render de la respuesta enviada como HTML para archivado SP."""
+    import html as _h
+    fecha_s = fecha.strftime("%Y-%m-%d %H:%M") if hasattr(fecha, "strftime") else str(fecha or "")
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<title>Respuesta enviada</title>"
+        "<style>body{font-family:Arial,sans-serif;max-width:780px;margin:20px auto;color:#222}"
+        "table{border-collapse:collapse;width:100%;margin-bottom:1em}"
+        "th,td{text-align:left;padding:6px 10px;border:1px solid #ddd;font-size:13px}"
+        "th{background:#f4f4f4;width:120px}"
+        ".cuerpo{border:1px solid #ddd;padding:12px;background:#fafafa;line-height:1.5}"
+        "</style></head><body>"
+        "<h2>Respuesta enviada</h2>"
+        f"<table><tr><th>Para</th><td>{_h.escape(destinatario or '')}</td></tr>"
+        f"<tr><th>Fecha</th><td>{_h.escape(fecha_s)}</td></tr>"
+        f"<tr><th>Asunto</th><td>{_h.escape(subject or '')}</td></tr></table>"
+        f"<div class='cuerpo'>{_md_to_html(cuerpo or '')}</div>"
+        "</body></html>"
+    )
+
+
 def _send_via_smtp_fallback(to_email: str, subject: str, body: str) -> bool:
     """Fallback SMTP cuando Zoho falla. Usa SMTP_FALLBACK_* env vars, cae a Gmail demo si no hay.
 
@@ -659,6 +707,28 @@ async def aprobar_lote(
         buzon["zoho_refresh_token"], buzon["zoho_account_id"]
     ) if buzon else None
 
+    # Sprint FF bloque 6: SharePoint engine para archivado post-envío.
+    # Se construye 1 vez por lote — reutiliza el access token entre cases.
+    sp_engine = None
+    try:
+        sp_row = await conn.fetchrow(
+            """SELECT sharepoint_site_id, sharepoint_base_folder,
+                      azure_client_id, azure_client_secret, azure_tenant_id
+               FROM config_buzones
+               WHERE cliente_id = $1 AND sharepoint_site_id IS NOT NULL
+               LIMIT 1""",
+            uuid.UUID(current_user.tenant_uuid),
+        )
+        if sp_row and sp_row["sharepoint_site_id"]:
+            from app.services.sharepoint_engine import SharePointEngineV2
+            sp_engine = SharePointEngineV2(
+                sp_row["azure_client_id"], sp_row["azure_client_secret"],
+                sp_row["azure_tenant_id"],
+                sp_row["sharepoint_site_id"], sp_row["sharepoint_base_folder"],
+            )
+    except Exception as e:
+        logger.warning(f"SP engine init failed (sigue sin archivado): {e}")
+
     lote_id = uuid.uuid4()
     now     = datetime.now(timezone.utc)
     ip      = request.client.host if request.client else None
@@ -667,7 +737,9 @@ async def aprobar_lote(
     for cid in body.caso_ids:
         try:
             caso = await conn.fetchrow(
-                "SELECT id, email_origen, email_respuesta_override, asunto, borrador_respuesta "
+                "SELECT id, email_origen, email_respuesta_override, asunto, "
+                "cuerpo, borrador_respuesta, documento_peticionante, "
+                "tipo_workflow, fecha_recibido "
                 "FROM pqrs_casos WHERE id = $1",
                 uuid.UUID(cid),
             )
@@ -731,6 +803,57 @@ async def aprobar_lote(
                     }),
                 )
                 enviados.append(cid)
+
+                # ─── Sprint FF bloque 6: archivado SharePoint ──────────
+                # Solo para tipo_workflow='PQRS' (decisión D2). Best-effort
+                # — si falla, log warn y sigue sin romper el envío.
+                if (sp_engine and caso["tipo_workflow"] == "PQRS"
+                        and caso["documento_peticionante"]):
+                    try:
+                        # Construir HTML del mail original
+                        mail_html = _render_mail_html(
+                            asunto=caso["asunto"],
+                            cuerpo=caso["cuerpo"] or "",
+                            sender=caso["email_origen"],
+                            fecha=caso["fecha_recibido"],
+                        ).encode("utf-8")
+                        # Construir HTML de la respuesta
+                        respuesta_html = _render_respuesta_html(
+                            subject=subject,
+                            destinatario=email_destino,
+                            cuerpo=caso["borrador_respuesta"],
+                            fecha=now,
+                        ).encode("utf-8")
+                        # Adjuntos en formato dict con bytes
+                        adj_para_sp = []
+                        for ar in adj_rows:
+                            content_bytes = download_file(ar["storage_path"])
+                            if content_bytes:
+                                adj_para_sp.append({
+                                    "nombre_archivo": ar["nombre_archivo"],
+                                    "content_bytes": content_bytes,
+                                    "content_type": ar["content_type"]
+                                                    or "application/octet-stream",
+                                })
+
+                        sp_path = await sp_engine.archivar_caso(
+                            cedula=caso["documento_peticionante"],
+                            fecha=now,
+                            mail_original_html=mail_html,
+                            respuesta_html=respuesta_html,
+                            adjuntos=adj_para_sp,
+                        )
+                        if sp_path:
+                            await conn.execute(
+                                """UPDATE pqrs_casos
+                                   SET metadata_especifica =
+                                       COALESCE(metadata_especifica, '{}'::jsonb)
+                                       || jsonb_build_object('sp_archivo', $1::text)
+                                   WHERE id = $2""",
+                                sp_path, caso["id"],
+                            )
+                    except Exception as sp_err:
+                        logger.warning(f"SP archivar_caso falló caso {cid}: {sp_err}")
             else:
                 errores.append({"caso_id": cid, "motivo": "Error Zoho al enviar"})
         except Exception as e:
