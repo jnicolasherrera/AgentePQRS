@@ -3,6 +3,7 @@ import uuid
 import json
 import logging
 import os
+import re
 import smtplib
 from datetime import datetime, timezone
 from email.mime.image import MIMEImage
@@ -42,6 +43,54 @@ def _firma_html() -> str:
     if _firma_bytes() is None:
         return ""
     return f'<br><img src="cid:{_FIRMA_CID}" style="max-width:560px;display:block;" alt="Firma" />'
+
+
+def _render_mail_html(asunto: str, cuerpo: str, sender: str, fecha) -> str:
+    """Render del mail original del cliente como HTML para archivado SP.
+
+    Sprint FlexFintech 2026-05-27 bloque 6 — decisión D5 (HTML, no .eml).
+    Usado por enviar-lote post-envío para archivar en SharePoint.
+    """
+    import html as _h
+    fecha_s = fecha.strftime("%Y-%m-%d %H:%M") if hasattr(fecha, "strftime") else str(fecha or "")
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<title>Mail original</title>"
+        "<style>body{font-family:Arial,sans-serif;max-width:780px;margin:20px auto;color:#222}"
+        "table{border-collapse:collapse;width:100%;margin-bottom:1em}"
+        "th,td{text-align:left;padding:6px 10px;border:1px solid #ddd;font-size:13px}"
+        "th{background:#f4f4f4;width:120px}"
+        ".cuerpo{white-space:pre-wrap;border:1px solid #ddd;padding:12px;background:#fafafa}"
+        "</style></head><body>"
+        "<h2>Mail original</h2>"
+        f"<table><tr><th>De</th><td>{_h.escape(sender or '')}</td></tr>"
+        f"<tr><th>Fecha</th><td>{_h.escape(fecha_s)}</td></tr>"
+        f"<tr><th>Asunto</th><td>{_h.escape(asunto or '')}</td></tr></table>"
+        f"<div class='cuerpo'>{_h.escape(cuerpo or '')}</div>"
+        "</body></html>"
+    )
+
+
+def _render_respuesta_html(subject: str, destinatario: str, cuerpo: str, fecha) -> str:
+    """Render de la respuesta enviada como HTML para archivado SP."""
+    import html as _h
+    fecha_s = fecha.strftime("%Y-%m-%d %H:%M") if hasattr(fecha, "strftime") else str(fecha or "")
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<title>Respuesta enviada</title>"
+        "<style>body{font-family:Arial,sans-serif;max-width:780px;margin:20px auto;color:#222}"
+        "table{border-collapse:collapse;width:100%;margin-bottom:1em}"
+        "th,td{text-align:left;padding:6px 10px;border:1px solid #ddd;font-size:13px}"
+        "th{background:#f4f4f4;width:120px}"
+        ".cuerpo{border:1px solid #ddd;padding:12px;background:#fafafa;line-height:1.5}"
+        "</style></head><body>"
+        "<h2>Respuesta enviada</h2>"
+        f"<table><tr><th>Para</th><td>{_h.escape(destinatario or '')}</td></tr>"
+        f"<tr><th>Fecha</th><td>{_h.escape(fecha_s)}</td></tr>"
+        f"<tr><th>Asunto</th><td>{_h.escape(subject or '')}</td></tr></table>"
+        f"<div class='cuerpo'>{_md_to_html(cuerpo or '')}</div>"
+        "</body></html>"
+    )
 
 
 def _send_via_smtp_fallback(to_email: str, subject: str, body: str) -> bool:
@@ -419,6 +468,94 @@ async def update_caso(
     return {"status": "ok", "id": str(updated_id)}
 
 
+class DestinatarioOverrideRequest(BaseModel):
+    """Body para PATCH /casos/{id}/destinatario.
+
+    - email: nuevo destinatario (None / "" / null → quitar override y
+      volver a usar `email_origen`).
+    """
+    email: Optional[str] = None
+
+
+# Regex email moderadamente estricta (RFC 5322 light).
+_EMAIL_OVERRIDE_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+
+
+@router.patch("/{caso_id}/destinatario")
+async def editar_destinatario(
+    caso_id: str,
+    body: DestinatarioOverrideRequest,
+    request: Request,
+    current_user: UserInToken = Depends(get_current_user),
+    conn=Depends(get_db_connection),
+):
+    """Editar el destinatario al que se enviará la respuesta del caso.
+
+    Sprint FlexFintech 2026-05-27 — bloque 5.
+
+    Cuando admin/super_admin necesita override (típico: el adjunto pide
+    responder a un email distinto al `email_origen`). Setea
+    `pqrs_casos.email_respuesta_override`. El endpoint enviar-lote usa
+    `override or email_origen`.
+
+    Pasar `email=null` o `""` para quitar el override (vuelve al email_origen).
+
+    Auditoría: registra acción 'DESTINATARIO_EDITADO' en audit_log_respuestas
+    con metadata `{anterior, nuevo, usuario}`.
+    """
+    if current_user.role not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail="Solo admin / super_admin")
+
+    nuevo_email = (body.email or "").strip().lower() or None
+    if nuevo_email is not None and not _EMAIL_OVERRIDE_RE.match(nuevo_email):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Email inválido: {body.email!r}",
+        )
+
+    # Traer caso actual (con scope tenant excepto super_admin)
+    es_super = current_user.role == "super_admin"
+    actual = await conn.fetchrow(
+        """SELECT id, cliente_id, email_origen, email_respuesta_override
+           FROM pqrs_casos
+           WHERE id = $1 AND ($2 OR cliente_id = $3)""",
+        uuid.UUID(caso_id), es_super, uuid.UUID(current_user.tenant_uuid),
+    )
+    if not actual:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
+
+    anterior = actual["email_respuesta_override"] or actual["email_origen"]
+
+    await conn.execute(
+        """UPDATE pqrs_casos SET email_respuesta_override = $1,
+                                  updated_at = NOW()
+           WHERE id = $2""",
+        nuevo_email, uuid.UUID(caso_id),
+    )
+
+    # Audit
+    ip = request.client.host if request.client else None
+    await conn.execute(
+        """INSERT INTO audit_log_respuestas
+              (caso_id, usuario_id, accion, ip_origen, metadata)
+           VALUES ($1, $2, 'DESTINATARIO_EDITADO', $3, $4)""",
+        uuid.UUID(caso_id), uuid.UUID(current_user.usuario_id), ip,
+        json.dumps({
+            "anterior": anterior,
+            "nuevo": nuevo_email,
+            "email_origen_caso": actual["email_origen"],
+            "tipo_cambio": "QUITAR_OVERRIDE" if nuevo_email is None else "SET_OVERRIDE",
+        }),
+    )
+
+    return {
+        "status": "ok",
+        "caso_id": caso_id,
+        "email_destinatario_efectivo": nuevo_email or actual["email_origen"],
+        "fue_override": nuevo_email is not None,
+    }
+
+
 class BorradorUpdateRequest(BaseModel):
     texto: str
 
@@ -570,6 +707,28 @@ async def aprobar_lote(
         buzon["zoho_refresh_token"], buzon["zoho_account_id"]
     ) if buzon else None
 
+    # Sprint FF bloque 6: SharePoint engine para archivado post-envío.
+    # Se construye 1 vez por lote — reutiliza el access token entre cases.
+    sp_engine = None
+    try:
+        sp_row = await conn.fetchrow(
+            """SELECT sharepoint_site_id, sharepoint_base_folder,
+                      azure_client_id, azure_client_secret, azure_tenant_id
+               FROM config_buzones
+               WHERE cliente_id = $1 AND sharepoint_site_id IS NOT NULL
+               LIMIT 1""",
+            uuid.UUID(current_user.tenant_uuid),
+        )
+        if sp_row and sp_row["sharepoint_site_id"]:
+            from app.services.sharepoint_engine import SharePointEngineV2
+            sp_engine = SharePointEngineV2(
+                sp_row["azure_client_id"], sp_row["azure_client_secret"],
+                sp_row["azure_tenant_id"],
+                sp_row["sharepoint_site_id"], sp_row["sharepoint_base_folder"],
+            )
+    except Exception as e:
+        logger.warning(f"SP engine init failed (sigue sin archivado): {e}")
+
     lote_id = uuid.uuid4()
     now     = datetime.now(timezone.utc)
     ip      = request.client.host if request.client else None
@@ -578,11 +737,18 @@ async def aprobar_lote(
     for cid in body.caso_ids:
         try:
             caso = await conn.fetchrow(
-                "SELECT id, email_origen, asunto, borrador_respuesta FROM pqrs_casos WHERE id = $1",
+                "SELECT id, email_origen, email_respuesta_override, asunto, "
+                "cuerpo, borrador_respuesta, documento_peticionante, "
+                "tipo_workflow, fecha_recibido "
+                "FROM pqrs_casos WHERE id = $1",
                 uuid.UUID(cid),
             )
             if not caso or not caso["borrador_respuesta"]:
                 errores.append({"caso_id": cid, "motivo": "Sin borrador o no encontrado"}); continue
+
+            # Sprint FF bloque 5: override del destinatario si admin editó.
+            email_destino = caso["email_respuesta_override"] or caso["email_origen"]
+            fue_override = caso["email_respuesta_override"] is not None
 
             # Cargar adjuntos de reply desde MinIO
             adj_rows = await conn.fetch(
@@ -604,7 +770,7 @@ async def aprobar_lote(
             metodo_envio = "ninguno"
             if zoho:
                 try:
-                    ok = zoho.send_reply(caso["email_origen"], subject, caso["borrador_respuesta"],
+                    ok = zoho.send_reply(email_destino, subject, caso["borrador_respuesta"],
                                          buzon["email_buzon"], adjuntos=adjuntos_data or None)
                     if ok:
                         metodo_envio = "zoho"
@@ -613,7 +779,7 @@ async def aprobar_lote(
                 except Exception as zoho_err:
                     logger.error(f"Zoho excepción caso {cid}: {zoho_err} — intentando fallback SMTP")
             if not ok:
-                ok = _send_via_smtp_fallback(caso["email_origen"], subject, caso["borrador_respuesta"])
+                ok = _send_via_smtp_fallback(email_destino, subject, caso["borrador_respuesta"])
                 if ok:
                     metodo_envio = "smtp_fallback"
             if ok:
@@ -627,10 +793,75 @@ async def aprobar_lote(
                            (caso_id, usuario_id, accion, lote_id, ip_origen, metadata)
                        VALUES ($1,$2,'ENVIADO_LOTE',$3,$4,$5)""",
                     caso["id"], uuid.UUID(current_user.usuario_id), lote_id, ip,
-                    json.dumps({"email_destino": caso["email_origen"], "asunto": subject,
-                                "lote_size": len(body.caso_ids), "metodo_envio": metodo_envio}),
+                    json.dumps({
+                        "email_destino": email_destino,
+                        "email_origen_caso": caso["email_origen"],
+                        "fue_override": fue_override,
+                        "asunto": subject,
+                        "lote_size": len(body.caso_ids),
+                        "metodo_envio": metodo_envio,
+                    }),
                 )
                 enviados.append(cid)
+
+                # ─── Sprint FF bloque 6: archivado SharePoint ──────────
+                # Solo para tipo_workflow='PQRS' (decisión D2). Best-effort
+                # — si falla, log warn y sigue sin romper el envío.
+                if (sp_engine and caso["tipo_workflow"] == "PQRS"
+                        and caso["documento_peticionante"]):
+                    try:
+                        # Construir HTML del mail original
+                        mail_html = _render_mail_html(
+                            asunto=caso["asunto"],
+                            cuerpo=caso["cuerpo"] or "",
+                            sender=caso["email_origen"],
+                            fecha=caso["fecha_recibido"],
+                        ).encode("utf-8")
+                        # Construir HTML de la respuesta
+                        respuesta_html = _render_respuesta_html(
+                            subject=subject,
+                            destinatario=email_destino,
+                            cuerpo=caso["borrador_respuesta"],
+                            fecha=now,
+                        ).encode("utf-8")
+                        # bug_020B fix: para el ARCHIVO histórico SP queremos
+                        # los adjuntos ORIGINALES del mail entrante (es_reply=FALSE),
+                        # NO los uploads del admin para la respuesta (es_reply=TRUE
+                        # que ya están en adj_rows arriba para el envío Zoho).
+                        adj_orig_rows = await conn.fetch(
+                            "SELECT storage_path, nombre_archivo, content_type "
+                            "FROM pqrs_adjuntos WHERE caso_id=$1 AND es_reply=FALSE",
+                            caso["id"],
+                        )
+                        adj_para_sp = []
+                        for ar in adj_orig_rows:
+                            content_bytes = download_file(ar["storage_path"])
+                            if content_bytes:
+                                adj_para_sp.append({
+                                    "nombre_archivo": ar["nombre_archivo"],
+                                    "content_bytes": content_bytes,
+                                    "content_type": ar["content_type"]
+                                                    or "application/octet-stream",
+                                })
+
+                        sp_path = await sp_engine.archivar_caso(
+                            cedula=caso["documento_peticionante"],
+                            fecha=now,
+                            mail_original_html=mail_html,
+                            respuesta_html=respuesta_html,
+                            adjuntos=adj_para_sp,
+                        )
+                        if sp_path:
+                            await conn.execute(
+                                """UPDATE pqrs_casos
+                                   SET metadata_especifica =
+                                       COALESCE(metadata_especifica, '{}'::jsonb)
+                                       || jsonb_build_object('sp_archivo', $1::text)
+                                   WHERE id = $2""",
+                                sp_path, caso["id"],
+                            )
+                    except Exception as sp_err:
+                        logger.warning(f"SP archivar_caso falló caso {cid}: {sp_err}")
             else:
                 errores.append({"caso_id": cid, "motivo": "Error Zoho al enviar"})
         except Exception as e:

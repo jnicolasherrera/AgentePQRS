@@ -163,7 +163,12 @@ _DETECTION_RULES = [
 
 
 def detectar_problematica(asunto: str, cuerpo: str) -> Optional[str]:
-    """Retorna el slug de la problemática más probable, o None si no hay match."""
+    """Detector estático (legacy): solo usa _DETECTION_RULES hardcoded.
+
+    Mantenido para callers sin acceso a DB. Para detección que también
+    matchea las plantillas dinámicas seedeadas (las 49 del Excel FF),
+    usar `detectar_problematica_dinamica`.
+    """
     texto = (asunto + " " + cuerpo[:1000]).lower()
 
     for slug, kw_base, kw_required in _DETECTION_RULES:
@@ -174,13 +179,75 @@ def detectar_problematica(asunto: str, cuerpo: str) -> Optional[str]:
     return None
 
 
-async def obtener_plantilla(conn: asyncpg.Connection, tenant_id: str, problematica: str) -> Optional[dict]:
-    """Busca la plantilla activa para el tenant y problemática dados."""
+async def detectar_problematica_dinamica(
+    conn: asyncpg.Connection,
+    tenant_id: str,
+    asunto: str,
+    cuerpo: str,
+    *,
+    tipo_workflow: str = "PQRS",
+) -> Optional[str]:
+    """Detector híbrido (sprint FF bloque post-review ultrareview #11 — bug_016).
+
+    Combina:
+    1. `_DETECTION_RULES` hardcoded (8 reglas legacy Recovery).
+    2. **Plantillas DB**: query a `plantillas_respuesta` filtrando por
+       (cliente_id, tipo_workflow, is_active=TRUE, keywords no vacías) y
+       matcheando cada keyword en el texto.
+
+    Si ambas matchean, gana la hardcoded (más específica con
+    `kw_required`). Si solo matchea DB, devuelve el slug DB.
+    """
+    # 1) Hardcoded primero (preserva semántica Recovery actual).
+    slug_hc = detectar_problematica(asunto, cuerpo)
+    if slug_hc:
+        return slug_hc
+
+    # 2) Plantillas DB con keywords.
+    try:
+        rows = await conn.fetch(
+            """SELECT problematica, keywords FROM plantillas_respuesta
+               WHERE cliente_id = $1::uuid
+                 AND tipo_workflow = $2
+                 AND is_active = TRUE
+                 AND keywords IS NOT NULL
+                 AND array_length(keywords, 1) > 0""",
+            uuid.UUID(tenant_id), tipo_workflow,
+        )
+    except Exception as e:
+        logger.warning("detectar_problematica_dinamica: query falló (%s)", e)
+        return None
+
+    if not rows:
+        return None
+
+    texto = (asunto + " " + (cuerpo or "")[:1000]).lower()
+    for r in rows:
+        for kw in (r["keywords"] or []):
+            if kw and kw.lower() in texto:
+                return r["problematica"]
+    return None
+
+
+async def obtener_plantilla(
+    conn: asyncpg.Connection,
+    tenant_id: str,
+    problematica: str,
+    *,
+    tipo_workflow: str = "PQRS",
+) -> Optional[dict]:
+    """Busca la plantilla activa para el tenant + problemática + workflow.
+
+    ``tipo_workflow`` separa plantillas legales (PQRS) de operativas
+    (ATENCION_CLIENTE). Default 'PQRS' para mantener backward-compat con
+    callers viejos. Sprint FlexFintech 2026-05-27.
+    """
     row = await conn.fetchrow(
         """SELECT id, cuerpo, contexto FROM plantillas_respuesta
            WHERE cliente_id = $1 AND problematica = $2 AND is_active = TRUE
+             AND tipo_workflow = $3
            LIMIT 1""",
-        uuid.UUID(tenant_id), problematica,
+        uuid.UUID(tenant_id), problematica, tipo_workflow,
     )
     return dict(row) if row else None
 
@@ -241,18 +308,32 @@ async def generar_borrador_para_caso(
     radicado: Optional[str] = None,
     email_origen: Optional[str] = None,
     fecha_vencimiento: Optional[str] = None,
+    *,
+    tipo_workflow: str = "PQRS",
 ) -> dict:
     """
     Detecta problemática, obtiene plantilla, personaliza borrador y actualiza pqrs_casos.
     Si no hay plantilla específica, intenta fallback genérico por tipo_caso.
+
+    ``tipo_workflow`` (PQRS | ATENCION_CLIENTE) filtra plantillas para que no
+    se mezclen las legales con las operativas. Default 'PQRS' = backward-compat.
+
     Retorna dict con borrador_respuesta, borrador_estado, problematica_detectada.
     """
-    problematica = detectar_problematica(asunto, cuerpo)
-    plantilla    = await obtener_plantilla(conn, tenant_id, problematica) if problematica else None
+    # bug_016 fix: usar el detector dinámico que matchea también las
+    # 49 plantillas DB seedeadas para FlexFintech (no solo las 8 hardcoded).
+    problematica = await detectar_problematica_dinamica(
+        conn, tenant_id, asunto, cuerpo, tipo_workflow=tipo_workflow,
+    )
+    plantilla    = await obtener_plantilla(
+        conn, tenant_id, problematica, tipo_workflow=tipo_workflow,
+    ) if problematica else None
 
     if not plantilla and tipo_caso:
         slug_generico = f"GENERICO_{tipo_caso.upper()}"
-        plantilla = await obtener_plantilla(conn, tenant_id, slug_generico)
+        plantilla = await obtener_plantilla(
+            conn, tenant_id, slug_generico, tipo_workflow=tipo_workflow,
+        )
 
     rag_docs_usados: list[dict] = []
     if plantilla:
