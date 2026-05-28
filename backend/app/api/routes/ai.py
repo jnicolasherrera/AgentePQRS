@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from app.core.db import get_db_connection
-from app.services.ai_engine import analizar_pqr_documento, redactar_borrador_legal
+from app.services.ai_engine import analizar_pqr_documento
+from app.services.plantilla_engine import generar_borrador_para_caso
 from app.core.security import get_current_user, UserInToken
 
 
@@ -50,10 +51,26 @@ async def generar_draft(
     if not caso:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
 
-    draft = await redactar_borrador_legal(dict(caso))
-    if body.save:
+    # Sprint FF cierre-de-loop 2026-05-27 — paridad con el worker:
+    # ambos paths (POST /draft manual + worker automático) ahora consultan
+    # plantillas vía DB (incl. Recovery, ya migradas a plantillas_respuesta).
+    # Esto elimina el dict PLANTILLAS_RECOVERY hardcoded en ai_engine.py.
+    result = await generar_borrador_para_caso(
+        db, str(tenant), str(caso["id"]),
+        asunto=caso.get("asunto") or "",
+        cuerpo=caso.get("cuerpo") or "",
+        nombre_cliente=caso.get("nombre_solicitante"),
+        cedula=caso.get("documento_peticionante"),
+        tipo_caso=caso.get("tipo_caso"),
+        radicado=caso.get("numero_radicado"),
+        email_origen=caso.get("email_origen"),
+        tipo_workflow=caso.get("tipo_workflow") or "PQRS",
+    )
+    draft = result.get("borrador_respuesta") or ""
+    if body.save and draft:
         await db.execute(
             "UPDATE pqrs_casos SET borrador_respuesta = $1, borrador_estado = 'PENDIENTE' WHERE id = $2 AND cliente_id = $3",
             draft, uuid.UUID(caso_id), tenant,
         )
-    return {"status": "success", "draft": draft}
+    return {"status": "success", "draft": draft,
+            "problematica_detectada": result.get("problematica_detectada")}
