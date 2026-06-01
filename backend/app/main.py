@@ -6,7 +6,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from app.core.db import init_db_pool, close_db_pool
+from app.core.db import init_db_pool, close_db_pool, get_raw_pool
 from app.core.config import settings
 from app.services.kafka_producer import init_kafka_producer, close_kafka_producer
 from app.api.routes import auth, stream, stats, casos, ai, admin, webhooks, plantillas
@@ -60,3 +60,22 @@ app.include_router(webhooks.router, prefix="/api")
 @app.get("/")
 def home_check():
     return {"status": "ok", "message": "FlexPQR API está VIVO."}
+
+
+@app.get("/health")
+async def health_check():
+    pool = get_raw_pool()
+    if pool is None:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "db": "uninitialized"},
+        )
+    try:
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        return {"status": "ok", "db": "up"}
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "db": "down", "error": str(e)},
+        )
