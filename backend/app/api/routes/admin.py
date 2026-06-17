@@ -341,14 +341,17 @@ async def eliminar_caso_no_pqrs(
 
     es_super = current_user.role == 'super_admin'
     row = await conn.fetchrow(
-        "SELECT id, es_pqrs, cliente_id FROM pqrs_casos WHERE id = $1::uuid" +
+        "SELECT id, es_pqrs, tipo_workflow, cliente_id FROM pqrs_casos WHERE id = $1::uuid" +
         ("" if es_super else " AND cliente_id = $2::uuid"),
         *([uuid.UUID(caso_id)] if es_super else [uuid.UUID(caso_id), uuid.UUID(current_user.tenant_uuid)])
     )
     if not row:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
-    if row["es_pqrs"] is not False:
-        raise HTTPException(status_code=400, detail="Solo se pueden eliminar casos marcados como No PQRS")
+    # Guard: solo borrar casos del flujo PQRS marcados No PQRS. Un caso movido a
+    # ATENCION_CLIENTE queda con es_pqrs=False (señal de aprendizaje) pero NO debe
+    # ser borrable desde el flujo de descarte — es un caso legítimo de AC.
+    if row["es_pqrs"] is not False or row["tipo_workflow"] != 'PQRS':
+        raise HTTPException(status_code=400, detail="Solo se pueden eliminar casos PQRS marcados como No PQRS")
 
     caso_uuid = uuid.UUID(caso_id)
     await conn.execute("DELETE FROM pqrs_adjuntos WHERE caso_id = $1::uuid", caso_uuid)
@@ -381,13 +384,14 @@ async def eliminar_no_pqrs_lote(
     tenant_params = [] if es_super else [uuid.UUID(current_user.tenant_uuid)]
 
     rows = await conn.fetch(
-        f"SELECT id, es_pqrs FROM pqrs_casos WHERE id = ANY($1::uuid[]){tenant_filter}",
+        f"SELECT id, es_pqrs, tipo_workflow FROM pqrs_casos WHERE id = ANY($1::uuid[]){tenant_filter}",
         uuids, *tenant_params
     )
 
     found_ids = {r["id"] for r in rows}
     not_found = [str(uid) for uid in uuids if uid not in found_ids]
-    not_no_pqrs = [str(r["id"]) for r in rows if r["es_pqrs"] is not False]
+    # Guard: solo PQRS marcados No PQRS (los casos AC con es_pqrs=False no se borran acá).
+    not_no_pqrs = [str(r["id"]) for r in rows if r["es_pqrs"] is not False or r["tipo_workflow"] != 'PQRS']
 
     if not_found:
         raise HTTPException(status_code=404, detail=f"Casos no encontrados: {', '.join(not_found)}")
