@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Clock, Save, Send, ShieldAlert, Mail, MessageSquare, Download, CheckCircle, BrainCircuit, XCircle, UserCheck, Scale, Link2, Search, Plus, Edit3, FolderOpen, AlertTriangle, FileText, ChevronDown } from "lucide-react";
 import { api, useAuthStore } from "@/store/authStore";
 import { usePlantillas } from "@/hooks/usePlantillas";
+import { useTenantWorkflows } from "@/hooks/useTenantWorkflows";
 import { getProblematicaMeta } from "@/lib/problematica-constants";
 import type { Plantilla } from "@/types/api";
 
@@ -21,12 +22,14 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
   const { user } = useAuthStore();
   const isAdmin = user?.rol === "admin" || user?.rol === "super_admin";
   const canReassign = isAdmin || user?.rol === "coordinador";
+  const { tieneAC } = useTenantWorkflows();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [comentarioTexto, setComentarioTexto] = useState("");
   const [loadingDraft, setLoadingDraft] = useState(false);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackDone, setFeedbackDone] = useState(false);
+  const [reclasificando, setReclasificando] = useState(false);
   const [draftText, setDraftText] = useState("");
   const [savingDraft, setSavingDraft] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
@@ -158,6 +161,20 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
       console.error(e);
     } finally {
       setFeedbackLoading(false);
+    }
+  };
+
+  const handleReclasificar = async (nuevoWorkflow: "PQRS" | "ATENCION_CLIENTE") => {
+    if (!casoId || reclasificando) return;
+    setReclasificando(true);
+    try {
+      await api.patch(`/admin/casos/${casoId}/workflow`, { tipo_workflow: nuevoWorkflow });
+      onStatusChange?.(casoId, { tipo_workflow: nuevoWorkflow });
+      onClose();
+    } catch (e) {
+      console.error("Error reclasificando caso", e);
+    } finally {
+      setReclasificando(false);
     }
   };
 
@@ -913,7 +930,36 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
               {/* BOTTOM ACTION BAR */}
               <footer className="px-6 py-3 border-t border-border bg-muted agente items-center justify-between shrink-0">
                 <div className="agente gap-3">
-                  {isAdmin && !feedbackDone && data.es_pqrs !== false && (
+                  {/* AC: levantar el caso al flujo PQRS */}
+                  {isAdmin && esAC && (
+                    <button
+                      onClick={() => handleReclasificar("PQRS")}
+                      disabled={reclasificando}
+                      className="agente items-center gap-2 px-4 py-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/15 text-xs font-bold rounded-xl transition-all disabled:opacity-50"
+                    >
+                      {reclasificando
+                        ? <div className="w-3 h-3 border-2 border-emerald-400/50 border-t-emerald-400 rounded-full animate-spin" />
+                        : <CheckCircle className="w-4 h-4" />
+                      }
+                      Sí es PQR
+                    </button>
+                  )}
+                  {/* PQRS + tenant con AC (FF): mover a Atención al Cliente */}
+                  {isAdmin && !esAC && tieneAC && (
+                    <button
+                      onClick={() => handleReclasificar("ATENCION_CLIENTE")}
+                      disabled={reclasificando}
+                      className="agente items-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/15 text-xs font-bold rounded-xl transition-all disabled:opacity-50"
+                    >
+                      {reclasificando
+                        ? <div className="w-3 h-3 border-2 border-red-400/50 border-t-red-400 rounded-full animate-spin" />
+                        : <XCircle className="w-4 h-4" />
+                      }
+                      No es PQR → Atención al cliente
+                    </button>
+                  )}
+                  {/* PQRS + tenant SIN AC (Recovery/Demo): descarte clásico */}
+                  {isAdmin && !esAC && !tieneAC && !feedbackDone && data.es_pqrs !== false && (
                     <button
                       onClick={handleNoPQRS}
                       disabled={feedbackLoading}
@@ -926,7 +972,7 @@ export function CasoDetailOverlay({ casoId, onClose, onStatusChange }: CasoDetai
                       Marcar NO PQRS
                     </button>
                   )}
-                  {isAdmin && (feedbackDone || data.es_pqrs === false) && (
+                  {isAdmin && !esAC && !tieneAC && (feedbackDone || data.es_pqrs === false) && (
                     <p className="text-xs text-muted-foreground agente items-center gap-2">
                       <XCircle className="w-4 h-4 text-red-400" />
                       Marcado como No PQRS
