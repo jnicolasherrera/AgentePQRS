@@ -1,3 +1,4 @@
+import json
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict, Any, Optional
@@ -248,6 +249,85 @@ async def marcar_feedback(
     )
 
     return {"ok": True, "feedback_count": count}
+
+
+_WORKFLOWS_VALIDOS = {"PQRS", "ATENCION_CLIENTE"}
+
+
+class ReclasificarWorkflowRequest(BaseModel):
+    tipo_workflow: str
+
+
+@router.patch("/casos/{caso_id}/workflow")
+async def reclasificar_workflow(
+    caso_id: str,
+    body: ReclasificarWorkflowRequest,
+    current_user: UserInToken = Depends(get_current_user),
+    conn = Depends(get_db_connection),
+) -> Dict[str, Any]:
+    """Mueve un caso entre PQRS y ATENCION_CLIENTE (bidireccional).
+
+    - "No es PQR" -> ATENCION_CLIENTE (es_pqrs=False).
+    - "Sí es PQR" -> PQRS (es_pqrs=True), "levanta" el caso al flujo legal.
+
+    Solo admin/super_admin. Solo tenants con AC habilitado (mismo criterio que
+    /auth/me). Deja señal de aprendizaje en pqrs_clasificacion_feedback y audita
+    en audit_log_respuestas (WORKFLOW_RECLASIFICADO). NO regenera borrador.
+    """
+    if current_user.role not in ('admin', 'super_admin'):
+        raise HTTPException(status_code=403, detail="Solo administradores")
+
+    nuevo = (body.tipo_workflow or "").strip().upper()
+    if nuevo not in _WORKFLOWS_VALIDOS:
+        raise HTTPException(status_code=400, detail=f"tipo_workflow inválido: {body.tipo_workflow!r}")
+
+    es_super = current_user.role == 'super_admin'
+
+    # Guard: el tenant debe tener AC habilitado (config_buzones o plantillas AC).
+    # Sin esto, mover a AC en un tenant sin AC dejaría el caso fuera de toda vista.
+    if es_super:
+        wf_rows = await conn.fetch(
+            "SELECT tipo_workflow FROM config_buzones WHERE is_active = TRUE "
+            "UNION SELECT DISTINCT tipo_workflow FROM plantillas_respuesta WHERE is_active = TRUE"
+        )
+    else:
+        wf_rows = await conn.fetch(
+            "SELECT tipo_workflow FROM config_buzones WHERE cliente_id = $1::uuid AND is_active = TRUE "
+            "UNION SELECT DISTINCT tipo_workflow FROM plantillas_respuesta WHERE cliente_id = $1::uuid AND is_active = TRUE",
+            uuid.UUID(current_user.tenant_uuid),
+        )
+    if "ATENCION_CLIENTE" not in {row["tipo_workflow"] for row in wf_rows if row["tipo_workflow"]}:
+        raise HTTPException(status_code=403, detail="El tenant no tiene Atención al Cliente habilitado")
+
+    row = await conn.fetchrow(
+        "SELECT id, tipo_workflow, tipo_caso, cliente_id FROM pqrs_casos "
+        "WHERE id = $1::uuid AND ($2 OR cliente_id = $3::uuid)",
+        uuid.UUID(caso_id), es_super, uuid.UUID(current_user.tenant_uuid),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
+
+    anterior = row["tipo_workflow"]
+    es_pqrs_flag = (nuevo == "PQRS")
+
+    await conn.execute(
+        "UPDATE pqrs_casos SET tipo_workflow = $1, es_pqrs = $2, updated_at = NOW() WHERE id = $3::uuid",
+        nuevo, es_pqrs_flag, uuid.UUID(caso_id),
+    )
+    await conn.execute(
+        """INSERT INTO pqrs_clasificacion_feedback
+              (caso_id, cliente_id, clasificacion_original, clasificacion_correcta, es_pqrs, marcado_por)
+           VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid)""",
+        uuid.UUID(caso_id), row["cliente_id"], row["tipo_caso"], nuevo,
+        es_pqrs_flag, uuid.UUID(current_user.usuario_id),
+    )
+    await conn.execute(
+        """INSERT INTO audit_log_respuestas (caso_id, usuario_id, accion, metadata)
+           VALUES ($1::uuid, $2::uuid, 'WORKFLOW_RECLASIFICADO', $3)""",
+        uuid.UUID(caso_id), uuid.UUID(current_user.usuario_id),
+        json.dumps({"anterior": anterior, "nuevo": nuevo}),
+    )
+    return {"ok": True, "tipo_workflow": nuevo}
 
 
 @router.delete("/casos/{caso_id}/no-pqrs")
