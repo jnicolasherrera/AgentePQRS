@@ -241,6 +241,10 @@ async def _ensure_alive_connection(conn, dsn: str, force: bool = False):
 # puntos como separadores. Acepta "1.007.403.296", "1007403296", "12345678".
 _RE_CEDULA = re.compile(r'\b(\d{1,3}(?:\.\d{3}){2,4}|\d{6,12})\b')
 
+# Imágenes inline: <img src="cid:...">. Cap ~2 MB decodificado (~2.8M chars b64).
+_RE_CID = re.compile(r'cid:([^"\'>\s)]+)', re.IGNORECASE)
+_INLINE_MAX_B64 = 2_800_000
+
 
 async def _lookup_cedula_historica(conn, cliente_id, sender):
     """Busca cédula en historico_email_cedula por sender (case-insensitive)."""
@@ -308,6 +312,43 @@ def _download_attachments_inline(em, prov):
     return out
 
 
+def _inline_images_a_base64(em, prov):
+    """Reemplaza <img src="cid:..."> por data:base64 usando el contentBytes que
+    Graph ya devuelve en get_attachments_meta. Devuelve el cuerpo reescrito.
+
+    Solo OUTLOOK (FF usa Graph; Zoho fuera de alcance). Best-effort: si una
+    imagen no matchea o supera el cap, se deja el cid: intacto. NUNCA propaga.
+    Sprint imágenes inline 2026-06-17.
+    """
+    body = em.get('body') or ''
+    if prov != 'OUTLOOK' or 'cid:' not in body.lower():
+        return body
+    try:
+        mapa = {}
+        for att in (em.get('attachments') or []):
+            cid = (att.get('contentId') or '').strip().strip('<>').strip()
+            b64 = att.get('contentBytes')
+            if not cid or not b64:
+                continue
+            if len(b64) > _INLINE_MAX_B64:
+                logger.warning(f"inline image {cid} supera cap ({len(b64)} chars b64), se saltea")
+                continue
+            ctype = att.get('contentType') or 'application/octet-stream'
+            mapa[cid] = f'data:{ctype};base64,{b64}'
+
+        if not mapa:
+            return body
+
+        def _repl(m):
+            cid = m.group(1).strip().strip('<>').strip()
+            return mapa.get(cid, m.group(0))
+
+        return _RE_CID.sub(_repl, body)
+    except Exception as e:
+        logger.warning(f"_inline_images_a_base64 falló, body intacto: {e}")
+        return body
+
+
 async def procesar_atencion_cliente(conn, r, em, c_id, b, dt, prov):
     """Flow simplificado para emails clasificados como ATENCION_CLIENTE
     (consultas operativas, no PQRS legal).
@@ -372,7 +413,7 @@ async def procesar_atencion_cliente(conn, r, em, c_id, b, dt, prov):
            VALUES ($1,$2,$3,$4,'ABIERTO','NORMAL',$5,'ATENCION_CLIENTE',$6,$7,$8,$9,$10)
            ON CONFLICT (cliente_id, external_msg_id) WHERE external_msg_id IS NOT NULL DO NOTHING
            RETURNING id""",
-        c_id, em['sender'], em['subject'], em['body'], dt,
+        c_id, em['sender'], em['subject'], em.get('cuerpo_html') or em['body'], dt,
         problematica, documento, (em['id'] or '').strip() or None,
         asignado_a, fecha_asignacion,
     )
@@ -529,6 +570,11 @@ async def master_worker():
                     if procesar_desde and dt < procesar_desde:
                         continue
 
+                    # Imágenes inline (cid:) → base64 embebido para el render del
+                    # frontend. En clave aparte: NO contamina em['body'] (que usa
+                    # la clasificación / el prompt de Claude). Best-effort.
+                    em['cuerpo_html'] = _inline_images_a_base64(em, prov)
+
                     # ─── Dispatcher PQRS vs ATENCION_CLIENTE (sprint FF bloque 3) ───
                     # Hotfix 2026-05-27: AC SOLO para FlexFintech (decisión del
                     # cliente). Otros tenants siempre PQRS, no importa el contenido.
@@ -581,7 +627,7 @@ async def master_worker():
                            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
                            ON CONFLICT (cliente_id, external_msg_id) WHERE external_msg_id IS NOT NULL DO NOTHING
                            RETURNING id""",
-                        c_id, em['sender'], em['subject'], em['body'], 'ABIERTO', resultado.prioridad.value, dt, resultado.tipo.value, venc, documento, (em['id'] or '').strip() or None, asignado_a, fecha_asignacion
+                        c_id, em['sender'], em['subject'], em['cuerpo_html'], 'ABIERTO', resultado.prioridad.value, dt, resultado.tipo.value, venc, documento, (em['id'] or '').strip() or None, asignado_a, fecha_asignacion
                     )
                     if not db_id:
                         logger.info(f"⏭️  Email ya procesado, ignorando: {em['id'][:20]}")
