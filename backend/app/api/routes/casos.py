@@ -210,7 +210,10 @@ async def historial_enviados(
     conn=Depends(get_db_connection),
 ) -> List[Dict[str, Any]]:
     ROLES_PERMITIDOS = {"admin", "super_admin", "analista", "coordinador", "auditor", "abogado"}
-    ROLES_VEN_TODO = {"admin", "coordinador", "super_admin", "auditor"}
+    # `abogado` ve el Enviados completo de SU tenant (no solo lo propio): el equipo
+    # de Abogados Recovery/ARC SAS comparte un único log de salida. `analista` (solo
+    # Demo) sigue restringido a lo suyo por decisión previa (commit 8adcaca).
+    ROLES_VEN_TODO = {"admin", "coordinador", "super_admin", "auditor", "abogado"}
 
     if current_user.role not in ROLES_PERMITIDOS:
         raise HTTPException(status_code=403, detail="Acceso denegado")
