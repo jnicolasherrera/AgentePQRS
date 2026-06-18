@@ -1,0 +1,1 @@
+NEXT_PUBLIC_API_URL=op://Dev/AgentePQRS-frontend-local/NEXT_PUBLIC_API_URL
