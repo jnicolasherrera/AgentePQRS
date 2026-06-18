@@ -43,3 +43,10 @@ _rediseno_shots/
 docker-compose.override.yml
 nginx/certs/*.key
 nginx/certs/*.orig
+# >>> 1Password op-inject >>>
+# El .env real se regenera con scripts/secrets.sh; el .env*.tpl NO tiene secretos.
+.env.bak.*
+.env.new
+!.env.local.tpl
+!.env.tpl
+# <<< 1Password op-inject <<<

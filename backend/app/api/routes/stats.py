@@ -18,7 +18,7 @@ async def get_dashboard_stats(
     conn = Depends(get_db_connection)
 ) -> Dict[str, Any]:
     es_super = current_user.role == 'super_admin'
-    es_abogado = current_user.role == 'analista'
+    es_abogado = current_user.role in ('analista', 'abogado')
 
     if workflow is not None and workflow not in ("PQRS", "ATENCION_CLIENTE"):
         raise HTTPException(status_code=400, detail="workflow inválido")

@@ -121,12 +121,16 @@ async def listar_casos_admin(
     current_user: UserInToken = Depends(get_current_user),
     conn = Depends(get_db_connection),
 ) -> Dict[str, Any]:
-    if current_user.role not in ['admin', 'super_admin']:
+    # Bandeja unificada: admin/super/coordinador ven todo el tenant; abogado/analista
+    # ven SOLO su cartera (casos con asignado_a = ellos). Modelo "cada abogado ve lo suyo".
+    _ROLES_CARTERA_PROPIA = ('abogado', 'analista')
+    if current_user.role not in ('admin', 'super_admin', *_ROLES_CARTERA_PROPIA):
         raise HTTPException(status_code=403, detail="Solo administradores")
     if workflow is not None and workflow not in ("PQRS", "ATENCION_CLIENTE"):
         raise HTTPException(status_code=400, detail="workflow inválido")
 
     es_super = current_user.role == 'super_admin'
+    ver_solo_propios = current_user.role in _ROLES_CARTERA_PROPIA
     filtros = ["1=1"]
     params: list = []
     idx = 1
@@ -148,7 +152,13 @@ async def listar_casos_admin(
         filtros.append(f"c.estado = ${idx}")
         params.append(estado.upper())
         idx += 1
-    if asignado_a:
+    if ver_solo_propios:
+        # Abogado/analista: la Bandeja muestra SOLO su cartera asignada. Se ignora
+        # cualquier asignado_a del query (no pueden mirar la de otro). Ya scoped al tenant.
+        filtros.append(f"c.asignado_a = ${idx}::uuid")
+        params.append(uuid.UUID(current_user.usuario_id))
+        idx += 1
+    elif asignado_a:
         filtros.append(f"c.asignado_a = ${idx}::uuid")
         params.append(uuid.UUID(asignado_a))
         idx += 1

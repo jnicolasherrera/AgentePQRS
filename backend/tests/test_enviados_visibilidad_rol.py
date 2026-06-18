@@ -1,10 +1,8 @@
 """Tests de visibilidad por rol en GET /casos/enviados/historial.
 
-Contexto (2026-06-18): el tenant Abogados Recovery / ARC SAS provisiona a su
-equipo con rol `abogado`. La regla previa (commit 8adcaca) restringía a todo
-rol fuera de ROLES_VEN_TODO a ver SOLO sus propios envíos. Pedido del cliente:
-los abogados deben ver el Enviados completo de su tenant. Fix: `abogado` pasa a
-ROLES_VEN_TODO; `analista` (solo Demo) sigue restringido.
+Contexto (2026-06-18): modelo "cada abogado ve lo suyo". El rol `abogado`
+(Abogados Recovery / ARC SAS) y `analista` (Demo) ven SOLO sus propios envíos;
+admin/coordinador/super/auditor ven el Enviados completo del tenant.
 
 Tests unitarios: mockean conn + current_user. No tocan DB. Se asertan los
 filtros SQL que arma el endpoint, capturando la query pasada a conn.fetch.
@@ -49,18 +47,16 @@ async def _query_de(rol):
 
 
 @pytest.mark.asyncio
-async def test_abogado_ve_todo_el_tenant_no_filtra_por_usuario():
+async def test_abogado_ve_solo_lo_suyo():
     query, params = await _query_de("abogado")
-    # Sigue aislado por tenant...
     assert "c.cliente_id = $1::uuid" in query
-    # ...pero NO se restringe a su propio usuario_id (el JOIN usa a.usuario_id,
-    # lo que NO debe aparecer es el FILTRO `a.usuario_id = $...`).
-    assert "a.usuario_id = $" not in query
-    assert uuid.UUID(USUARIO_ID) not in params
+    # abogado se restringe a sus propios envíos (filtro por usuario_id)
+    assert "a.usuario_id = $2::uuid" in query
+    assert uuid.UUID(USUARIO_ID) in params
 
 
 @pytest.mark.asyncio
-async def test_analista_sigue_restringido_a_lo_propio():
+async def test_analista_ve_solo_lo_suyo():
     query, params = await _query_de("analista")
     assert "c.cliente_id = $1::uuid" in query
     assert "a.usuario_id = $2::uuid" in query
