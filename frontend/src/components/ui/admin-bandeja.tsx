@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, RefreshCw, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Trash2, CheckSquare, Square, XCircle, AlertTriangle, Scale, MessageCircle } from "lucide-react";
-import { api } from "@/store/authStore";
+import { api, useAuthStore } from "@/store/authStore";
 import { CasoDetailOverlay } from "./caso-detail-overlay";
 import { useTenantWorkflows } from "@/hooks/useTenantWorkflows";
 import { WORKFLOW_FILTER_ITEMS, WORKFLOWS, workflowParam, type WorkflowFilter } from "@/lib/workflow-constants";
@@ -64,6 +64,8 @@ type BandejaSortKey = "radicado" | "asunto" | "tipo" | "estado" | "asignado" | "
 
 export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string }) {
   const { tieneAC } = useTenantWorkflows();
+  // Operador (abogado/analista): ve SU cartera, sin acciones admin (eliminar, No PQRS).
+  const esOperador = useAuthStore(s => s.user?.rol === "abogado" || s.user?.rol === "analista");
   const [items, setItems] = useState<CasoAdmin[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -231,8 +233,8 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
           className="bg-muted border border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary cursor-pointer">
           {ESTADOS.map(s => <option key={s} value={s}>{s || "Todos los estados"}</option>)}
         </select>
-        {/* Filtro "No PQRS": ya no expone el botón en modo AC (no es válido el cruce). */}
-        {!isModoAC && (
+        {/* Filtro "No PQRS": acción admin; oculto en modo AC y para operadores. */}
+        {!isModoAC && !esOperador && (
           <button
             onClick={() => { setFiltroNoPqrs(f => !f); setPage(1); }}
             className={`agente items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold transition-all ${
@@ -252,9 +254,9 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
         <span className="text-xs text-muted-foreground ml-auto">{total} casos</span>
       </div>
 
-      {/* Action bar when items selected */}
+      {/* Action bar when items selected (solo admin: eliminar lote) */}
       <AnimatePresence>
-        {seleccionados.size > 0 && (
+        {!esOperador && seleccionados.size > 0 && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -288,6 +290,7 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="bg-muted text-muted-foreground text-[10px] font-black uppercase tracking-widest border-b border-border">
+                  {!esOperador && (
                   <th className="px-3 py-3 w-10">
                     <button onClick={toggleSelectAll} className="text-muted-foreground hover:text-foreground transition-colors">
                       {seleccionados.size === items.length && items.length > 0
@@ -296,6 +299,7 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                       }
                     </button>
                   </th>
+                  )}
                   <th className="px-4 py-3 cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("radicado")}>
                     <span className="agente items-center gap-1">Radicado <SortIcon k="radicado" /></span>
                   </th>
@@ -343,6 +347,7 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                     onClick={() => setSelectedId(caso.id)}
                     className={`cursor-pointer hover:bg-muted transition-colors ${!caso.es_pqrs ? "border-l-2 border-l-red-500/50" : ""} ${seleccionados.has(caso.id) ? "bg-red-500/5" : ""}`}
                   >
+                    {!esOperador && (
                     <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
                       <button onClick={() => toggleSeleccion(caso.id)} className="text-muted-foreground hover:text-foreground transition-colors">
                         {seleccionados.has(caso.id)
@@ -351,6 +356,7 @@ export function AdminBandeja({ selectedClienteId }: { selectedClienteId?: string
                         }
                       </button>
                     </td>
+                    )}
                     <td className="px-4 py-3">
                       <span className="font-mono text-xs text-primary/80">
                         {caso.numero_radicado || caso.id.slice(0, 8)}

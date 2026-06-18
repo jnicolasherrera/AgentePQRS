@@ -47,9 +47,14 @@ export default function DashboardPage() {
   }, [mounted, user?.debe_cambiar_password]);
 
   const isAbogado = user?.rol === "analista";
+  // Operador (rol `abogado`, p.ej. Recovery): usa la Bandeja con SU cartera, sin
+  // acciones admin ni Rendimiento/Configuración del tenant.
+  const esOperador = user?.rol === "abogado";
 
   const tabs = isAbogado
     ? ["Dashboard", "Mis Casos", "Enviados", "Configuración"]
+    : esOperador
+    ? ["Dashboard", "Bandeja", "Enviados"]
     : ["Dashboard", "Bandeja", "Enviados", "Rendimiento", "Configuración"];
 
   const abogadoIcons = [
@@ -90,7 +95,8 @@ export default function DashboardPage() {
 
   if (!mounted || !isAuthenticated) return null;
 
-  const icons = isAbogado ? abogadoIcons : adminIcons;
+  // Operador reusa los 3 primeros íconos admin (Dashboard, Bandeja, Enviados).
+  const icons = isAbogado ? abogadoIcons : esOperador ? adminIcons.slice(0, 3) : adminIcons;
 
   return (
     <div className="h-screen w-full metallic-surface text-foreground agente overflow-hidden relative">
