@@ -9,6 +9,9 @@
 *.crdownload
 *.exe
 
+# Grafo de conocimiento generado por graphify (regenerable con `graphify update`)
+graphify-out/
+
 # Archivos de datos sensibles
 *.csv
 *.xlsx

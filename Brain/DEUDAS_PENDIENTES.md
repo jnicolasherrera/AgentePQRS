@@ -1,5 +1,34 @@
 # Deudas técnicas registradas
 
+## Seed plantillas Recovery en prod — ✅ OBSOLETA 2026-06-01
+
+**Estado:** descartada (no se ejecutó el seed, ni hace falta).
+
+**Origen:** sprint FF cierre-de-loop (PR #17, mergeado a main 2026-05-27) registró como pendiente "ejecutar `python -m scripts.seed_plantillas_recovery` contra AWS — tenant Recovery `effca814-...` no existe en local". El script vive en `backend/scripts/seed_plantillas_recovery.py` y migra 5 plantillas hardcoded de `ai_engine.PLANTILLAS_RECOVERY` a `plantillas_respuesta` (UPSERT idempotente).
+
+**Por qué se descartó:** verificación contra `pqrs_v2` prod 2026-06-01 mostró que el tenant Recovery ya tiene **8 plantillas** cargadas desde hace 87 días (onboarding marzo 2026), con cuerpos **más largos** que los del script:
+
+| problematica | chars en prod |
+|---|---|
+| DEBITOS_AUTOMATICOS | 1947 |
+| PAZ_Y_SALVO_RAPICREDIT | 1049 |
+| SUPLANTACION_RAPICREDIT | 2061 |
+| SUPLANTACION_GENERAL | 1713 (no en script) |
+| ELIMINACION_CENTRALES_PAZ_SALVO | 599 + 1677 (duplicada) |
+| SIN_IDENTIFICACION | 1138 (no en script) |
+| PAZ_Y_SALVO_FINDORSE | 907 |
+
+Correr el seed → UPDATE destructivo: sobreescribiría 4 plantillas con versiones más cortas/viejas (script tenía cuerpos ~700–900 chars). Las plantillas hardcoded en `ai_engine.PLANTILLAS_RECOVERY` eran simplificaciones que **nunca** representaron lo que Recovery usa en runtime.
+
+**Acciones de seguimiento:**
+1. Confirmar con Paola Lombana (incluido en aviso D3+RLS 2026-06-01) que las 8 plantillas actuales son las "buenas".
+2. Investigar duplicado `ELIMINACION_CENTRALES_PAZ_SALVO` (599 vs 1677 chars) — decidir cuál se queda.
+3. Considerar **deprecar el script** `backend/scripts/seed_plantillas_recovery.py` (o reescribirlo para snapshot-from-DB en lugar de hardcoded) para que no vuelva a aparecer la idea de correrlo.
+
+**Decisión:** Nico 2026-06-01 — opción A (no correr, validar con Paola).
+
+---
+
 ## Motor SLA sectorial — deploy pendiente
 
 **Estado:** dormido en `main` desde 2026-04-13
@@ -313,18 +342,25 @@ Adicionalmente, UUIDs productivos de FlexFintech y Cliente2 en `04_multi_tenant_
 
 ---
 
-### DT-25 — Backend no expone `/health` (ni staging ni posiblemente prod)
+### DT-25 — Backend no expone `/health` — ✅ RESUELTA 2026-06-01 (staging)
 
-**Origen:** verificación de restart del backend_v2 en staging (2026-04-23). `GET /health` → 404. La ruta canónica actual es `GET /` → `{"status":"ok","message":"FlexPQR API está VIVO."}`.
+**Origen:** verificación de restart del backend_v2 en staging (2026-04-23). `GET /health` → 404. La ruta canónica actual era `GET /` → `{"status":"ok","message":"FlexPQR API está VIVO."}`.
 
 **Severidad:** Baja. No bloqueante, pero afecta convenciones de monitoring externo (Cloudwatch, uptime probes, etc.).
 
-**Plan:**
-1. Verificar si el mismo 404 ocurre en prod (curl `http://18.228.54.9:8001/health` cuando se autorice).
-2. Si ambos ambientes comparten el gap, agregar endpoint `/health` al backend FastAPI con response `{"status":"ok"}` + chequeo básico de DB (SELECT 1).
-3. **Impacto inmediato en sprint:** los smoke tests del Agente 4 deben usar `GET /` (o endpoint conocido con DB-touch como `/api/v2/casos`), no `/health`.
+**Fix aplicado (PR #18, commit `87c7df7`, mergeado 2026-06-01):**
+- Endpoint `GET /health` agregado en `backend/app/main.py:65`.
+- Chequea DB con `SELECT 1` vía `get_raw_pool()`.
+- 200 + `{"status":"ok","db":"up"}` si el pool responde.
+- 503 + `{"status":"degraded","db":"down|uninitialized"}` si falla.
+- Sin auth (endpoint público de monitoring).
+- `GET /` queda intacto para compat con smoke tests existentes.
 
-**Responsable:** Agente 2 (backend) o Agente 6 (infra) en Sesión 3; queda como tarea paralela sin bloquear el sprint.
+**Smoke staging 2026-06-01 (post-upgrade full a main):**
+- `curl http://localhost:8001/health` → `{"status":"ok","db":"up"}` HTTP 200 ✅
+- `curl http://localhost:8001/` → `{"status":"ok","message":"FlexPQR API está VIVO."}` HTTP 200 ✅
+
+**Pendiente:** deploy a prod (`18.228.54.9`). Sesión aparte siguiendo `project-agentepqrs-deploy-preflight`. Sin cambios en `package.json` → no aplica preflight frontend; sí aplica restaurar `docker-compose.yml` del backup post-pull.
 
 ---
 
@@ -824,6 +860,9 @@ FROM pqrs_casos WHERE cliente_id = '...'
 | DT-38 | Zoho REST API inline image no garantiza render en Outlook | Media | sprint dedicado próximos 14d |
 | DT-39 | Bridge cron `check_ingestion.sh` falsos positivos madrugada CO | Media | reemplazar con DT-33 healthcheck |
 | DT-40 | "Cortesía a tutelas" sin evidencia empírica (esperando caso Paola) | Pendiente | esperar caso real |
+| DT-25 | Backend `/health` endpoint | ✅ RESUELTA 2026-06-01 (staging) | deploy prod pendiente |
+| DT-42 | `demo_worker` apunta a hostname MinIO `miniov2` inexistente | Baja | housekeeping |
+| DT-43 | `aequitas_worker` grants en staging quedaron como `GRANT ALL` (lazy) | Baja | granular por tabla cuando haya tiempo |
 
 ---
 
@@ -843,3 +882,51 @@ inapropiado y puede traer problemas legales.
 **Fix:** hoy ya se excluye `TUTELA` del acuse; extender la condición para excluir
 también remitentes con dominio judicial. Reusar la lista de dominios de
 `clasificador.py` (idealmente centralizarla en un solo lugar). Relacionado: DT-40.
+
+---
+
+## DT-42 — `demo_worker` apunta a hostname MinIO `miniov2` inexistente
+
+**Severidad:** Baja (degradación silenciosa, no rompe arranque).
+**Detectado:** 2026-06-01 durante upgrade staging post-sprint mayo.
+
+**Estado actual:** `demo_worker_v2` arranca y loguea:
+```
+MinIO intento 1/3 fallo: HTTPConnectionPool(host='miniov2', port=9000): ...
+Failed to resolve 'miniov2' ([Errno -3] Temporary failure in name resolution)
+No se pudo conectar con MinIO en 'miniov2:9000' tras 3 intentos.
+El almacenamiento de archivos no estara disponible hasta que MinIO responda.
+```
+
+El hostname correcto es `minio` (service name del compose) o `pqrs_v2_minio` (container name). El typo `miniov2` no resuelve.
+
+**Impacto:** demo_worker no puede subir archivos a MinIO. Para casos demo sin adjuntos no se nota; cuando hay adjuntos, se loguea pero no falla la ingesta. Pre-existe al upgrade del 2026-06-01 — apareció en logs porque ese día se reiniciaron los containers.
+
+**Fix:** localizar la env `MINIO_ENDPOINT=miniov2:9000` o config equivalente en `backend/demo_worker.py` o compose section del demo_worker, cambiar a `minio:9000`. Restart.
+
+**Owner:** sprint housekeeping infra.
+
+---
+
+## DT-43 — `aequitas_worker` grants en staging quedaron como `GRANT ALL` (lazy)
+
+**Severidad:** Baja (funcional, viola least-privilege).
+**Origen:** 2026-06-01 durante upgrade staging — el código nuevo del worker (post-sprint FF) usa `WORKER_DB_URL=aequitas_worker` para separación de funciones. En prod el rol tenía grants completos por histórico; en staging sólo tenía grants en las 5 tablas creadas en mayo (`respuestas_kb`, `ab_test_borradores`, `historico_email_cedula`, `config_buzones`, `kb_ingestion_log`) — los workers crashearon con `permission denied for table clientes_tenant` y `pqrs_casos`.
+
+**Hot-fix aplicado 2026-06-01:**
+```sql
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO aequitas_worker;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO aequitas_worker;
+```
+
+Resolvió el bloqueo y los workers volvieron a operar.
+
+**Por qué es deuda:** `GRANT ALL` es lazy — sobre-otorga. Ideal sería identificar la lista exacta de tablas que el worker usa y hacer GRANT granular `SELECT, INSERT, UPDATE, DELETE` por tabla. También evita que ALTER de schema accidentalmente expanda permisos del worker más allá de lo necesario.
+
+**Plan de fix:**
+1. Auditar `master_worker_outlook.py` + `demo_worker.py` para listar todas las tablas que tocan (grep por `FROM <tabla>`, `INSERT INTO`, `UPDATE`, etc.).
+2. Migrar a un seed SQL `seed_grants_aequitas_worker.sql` con `GRANT` granular por tabla.
+3. Aplicar a staging + prod (revisar prod también — quizás tiene el mismo over-grant histórico).
+4. Documentar en `Brain/02_servicios/` qué tablas usa el rol.
+
+**Owner:** sprint housekeeping seguridad (junto a DT-30 ORM↔DB reconciliación).
