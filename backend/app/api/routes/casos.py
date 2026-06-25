@@ -334,10 +334,12 @@ async def get_caso_detalle(
                   c.metadata_especifica
            FROM pqrs_casos c
            LEFT JOIN usuarios u ON u.id = c.asignado_a
-           WHERE c.id = $1 AND ($2 OR c.cliente_id = $3)""",
+           WHERE c.id = $1 AND ($2 OR c.cliente_id = $3) AND ($4 OR c.asignado_a = $5)""",
         uuid.UUID(caso_id),
         current_user.role == "super_admin",
         uuid.UUID(current_user.tenant_uuid),
+        current_user.role in {"admin", "coordinador", "super_admin", "auditor"},
+        uuid.UUID(current_user.usuario_id),
     )
     if not caso:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
@@ -495,6 +497,9 @@ async def update_caso(
     conn=Depends(get_db_connection),
 ):
     updates, values = [], []
+    ROLES_VEN_TODO = {"admin", "coordinador", "super_admin", "auditor"}
+    if "asignado_a" in payload and current_user.role not in ROLES_VEN_TODO:
+        raise HTTPException(status_code=403, detail="No autorizado para reasignar casos")
     if "estado" in payload:
         updates.append(f"estado = ${len(values)+1}"); values.append(payload["estado"])
     if "prioridad" in payload:
@@ -518,9 +523,11 @@ async def update_caso(
     # SEC-2026-05-21: scope por tenant (super_admin opera cualquiera).
     values.append(current_user.role == "super_admin")
     values.append(uuid.UUID(current_user.tenant_uuid))
+    values.append(current_user.role in ROLES_VEN_TODO)
+    values.append(uuid.UUID(current_user.usuario_id))
     updated_id = await conn.fetchval(
         f"UPDATE pqrs_casos SET {', '.join(updates)} "
-        f"WHERE id = ${idx_id} AND (${idx_id+1} OR cliente_id = ${idx_id+2}) RETURNING id", *values)
+        f"WHERE id = ${idx_id} AND (${idx_id+1} OR cliente_id = ${idx_id+2}) AND (${idx_id+3} OR asignado_a = ${idx_id+4}) RETURNING id", *values)
     if not updated_id:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
     if "asignado_a" in payload:
