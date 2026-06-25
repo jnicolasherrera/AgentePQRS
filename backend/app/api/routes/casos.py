@@ -116,8 +116,11 @@ def _send_via_smtp_fallback(to_email: str, subject: str, body: str,
     # El From visible es el buzón del tenant si se pasó; si no, el user SMTP.
     mail_from = from_address or smtp_user
     try:
-        firma_data = _firma_bytes()
-        firma_ref = _firma_html() if firma_data else ""
+        # firma-por-tenant 2026-06-25: FF → texto (sin imagen); resto → imagen CID.
+        from app.services.firma_engine import firma_html_cid, firma_bytes as _firma_tenant_bytes, usa_imagen as _usa_img
+        usa_img = _usa_img(email_buzon=from_address)
+        firma_data = _firma_tenant_bytes() if usa_img else None
+        firma_ref = firma_html_cid(email_buzon=from_address)
         html_body = (
             "<div style='font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6'>"
             + _md_to_html(body) + firma_ref + "</div>"
@@ -965,15 +968,19 @@ async def aprobar_lote(
             # ahí cae al fallback SMTP, y AHORA con el remitente correcto.
             if outlook_sender:
                 try:
-                    _firma = _firma_bytes()
+                    # firma-por-tenant 2026-06-25: FF → texto (sin imagen);
+                    # Recovery/ARC → imagen institucional inline (CID).
+                    from app.services.firma_engine import firma_html_cid, firma_bytes as _firma_tenant_bytes, usa_imagen as _usa_img
+                    _buzon_email = buzon["email_buzon"]
+                    _firma = _firma_tenant_bytes() if _usa_img(email_buzon=_buzon_email) else None
                     _html = (
                         "<div style='font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6'>"
                         + _md_to_html(caso["borrador_respuesta"])
-                        + (_firma_html() if _firma else "")
+                        + firma_html_cid(email_buzon=_buzon_email)
                         + "</div>"
                     )
                     ok = outlook_sender.send_reply(
-                        buzon["email_buzon"], email_destino, subject, _html,
+                        _buzon_email, email_destino, subject, _html,
                         firma_bytes=_firma, adjuntos=adjuntos_data or None,
                     )
                     if ok:
