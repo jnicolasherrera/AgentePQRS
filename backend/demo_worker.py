@@ -28,7 +28,7 @@ TIPOS_VALIDOS = {"TUTELA", "PETICION", "QUEJA", "RECLAMO", "SOLICITUD"}
 
 DATABASE_URL = os.environ.get("WORKER_DB_URL", "postgresql://aequitas_worker:changeme_worker@postgres_v2:5432/pqrs_v2")
 REDIS_URL     = os.environ.get("REDIS_URL",    "redis://redis_v2:6379")
-GMAIL_USER    = os.environ.get("DEMO_GMAIL_USER",     "democlasificador@gmail.com")
+GMAIL_USER    = os.environ.get("DEMO_GMAIL_USER",     "")
 GMAIL_PASS    = os.environ.get("DEMO_GMAIL_PASSWORD", "")
 RESET_MINUTES = int(os.environ.get("DEMO_RESET_MINUTES", "30"))
 

@@ -469,8 +469,9 @@ async def download_adjunto(
     conn=Depends(get_db_connection),
 ):
     row = await conn.fetchrow(
-        "SELECT nombre_archivo, storage_path, content_type FROM pqrs_adjuntos WHERE id = $1 AND caso_id = $2",
+        "SELECT nombre_archivo, storage_path, content_type FROM pqrs_adjuntos WHERE id = $1 AND caso_id = $2 AND ($3 OR cliente_id = $4)",
         uuid.UUID(adjunto_id), uuid.UUID(caso_id),
+        current_user.role == "super_admin", uuid.UUID(current_user.tenant_uuid),
     )
     if not row:
         raise HTTPException(status_code=404, detail="Adjunto no encontrado")
