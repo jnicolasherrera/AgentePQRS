@@ -19,6 +19,7 @@ from app.core.db import get_db_connection
 from app.core.security import get_current_user, UserInToken, verify_password
 from app.services.storage_engine import get_download_url, upload_file, download_file, client as minio_client, BUCKET_NAME
 from app.services.zoho_engine import ZohoServiceV2
+from app.services.outlook_send_engine import OutlookSenderV2
 from app.services.email_utils import md_to_html as _md_to_html
 
 
@@ -93,8 +94,14 @@ def _render_respuesta_html(subject: str, destinatario: str, cuerpo: str, fecha) 
     )
 
 
-def _send_via_smtp_fallback(to_email: str, subject: str, body: str) -> bool:
-    """Fallback SMTP cuando Zoho falla. Usa SMTP_FALLBACK_* env vars, cae a Gmail demo si no hay.
+def _send_via_smtp_fallback(to_email: str, subject: str, body: str,
+                            from_address: str | None = None) -> bool:
+    """Fallback SMTP cuando el envío primario (Graph/Zoho) falla.
+
+    from_address: buzón de origen del tenant (ej. clientes@flexfintech.com). Se
+    usa como cabecera From para NO filtrar desde la cuenta Gmail demo. Si el
+    servidor SMTP no permite ese From (Gmail rechaza dominios ajenos), hay que
+    configurar SMTP_FALLBACK_USER/PASS con credenciales del propio buzón.
 
     Construye MIME multipart/related con firma inline (CID) para que Outlook
     y otros clientes que bloquean data: URIs rendericen la imagen.
@@ -106,6 +113,8 @@ def _send_via_smtp_fallback(to_email: str, subject: str, body: str) -> bool:
     if not smtp_user or not smtp_pass:
         logger.error("SMTP fallback no configurado — envío perdido para: " + to_email)
         return False
+    # El From visible es el buzón del tenant si se pasó; si no, el user SMTP.
+    mail_from = from_address or smtp_user
     try:
         firma_data = _firma_bytes()
         firma_ref = _firma_html() if firma_data else ""
@@ -114,7 +123,7 @@ def _send_via_smtp_fallback(to_email: str, subject: str, body: str) -> bool:
             + _md_to_html(body) + firma_ref + "</div>"
         )
         root = MIMEMultipart("related") if firma_data else MIMEMultipart("alternative")
-        root["From"] = f"FlexPQR <{smtp_user}>"
+        root["From"] = f"FlexPQR <{mail_from}>"
         root["To"] = to_email
         root["Subject"] = subject
 
@@ -866,15 +875,28 @@ async def aprobar_lote(
     if not user_row or not verify_password(body.password, user_row["password_hash"]):
         raise HTTPException(status_code=401, detail="Contraseña incorrecta")
 
+    # FF-fix 2026-06: el envío debe respetar el proveedor del buzón del tenant.
+    # Antes esta query filtraba proveedor='ZOHO' → para tenants OUTLOOK (FlexFintech,
+    # cuentas en Microsoft 365) devolvía None y caía SIEMPRE al fallback SMTP de
+    # Gmail (democlasificador). Ahora traemos el buzón activo cualquiera sea su
+    # proveedor y enrutamos el envío según corresponda (OUTLOOK→Graph, ZOHO→Zoho).
     buzon = await conn.fetchrow(
-        """SELECT email_buzon, azure_client_id, azure_client_secret, zoho_refresh_token, zoho_account_id
-           FROM config_buzones WHERE cliente_id=$1 AND proveedor='ZOHO' AND is_active=TRUE LIMIT 1""",
+        """SELECT email_buzon, proveedor, azure_client_id, azure_client_secret,
+                  azure_tenant_id, zoho_refresh_token, zoho_account_id
+           FROM config_buzones
+           WHERE cliente_id=$1 AND is_active=TRUE
+           ORDER BY CASE WHEN proveedor='OUTLOOK' THEN 0 ELSE 1 END
+           LIMIT 1""",
         uuid.UUID(current_user.tenant_uuid),
     )
+    proveedor = (buzon["proveedor"] or "").upper() if buzon else None
     zoho = ZohoServiceV2(
         buzon["azure_client_id"], buzon["azure_client_secret"],
         buzon["zoho_refresh_token"], buzon["zoho_account_id"]
-    ) if buzon else None
+    ) if buzon and proveedor == "ZOHO" else None
+    outlook_sender = OutlookSenderV2(
+        buzon["azure_client_id"], buzon["azure_client_secret"], buzon["azure_tenant_id"]
+    ) if buzon and proveedor == "OUTLOOK" else None
 
     # Sprint FF bloque 6: SharePoint engine para archivado post-envío.
     # Se construye 1 vez por lote — reutiliza el access token entre cases.
@@ -937,7 +959,30 @@ async def aprobar_lote(
             subject = f"Re: {caso['asunto']}"
             ok = False
             metodo_envio = "ninguno"
-            if zoho:
+            # FF-fix 2026-06: enrutar el envío por el proveedor del buzón del tenant.
+            # OUTLOOK (Microsoft 365, ej. FlexFintech) → Graph sendMail desde el
+            # propio buzón. ZOHO → API Zoho. Si el camino primario falla, recién
+            # ahí cae al fallback SMTP, y AHORA con el remitente correcto.
+            if outlook_sender:
+                try:
+                    _firma = _firma_bytes()
+                    _html = (
+                        "<div style='font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6'>"
+                        + _md_to_html(caso["borrador_respuesta"])
+                        + (_firma_html() if _firma else "")
+                        + "</div>"
+                    )
+                    ok = outlook_sender.send_reply(
+                        buzon["email_buzon"], email_destino, subject, _html,
+                        firma_bytes=_firma, adjuntos=adjuntos_data or None,
+                    )
+                    if ok:
+                        metodo_envio = "outlook_graph"
+                    else:
+                        logger.warning(f"Graph retornó False para caso {cid} — intentando fallback SMTP")
+                except Exception as gerr:
+                    logger.error(f"Graph excepción caso {cid}: {gerr} — intentando fallback SMTP")
+            elif zoho:
                 try:
                     ok = zoho.send_reply(email_destino, subject, caso["borrador_respuesta"],
                                          buzon["email_buzon"], adjuntos=adjuntos_data or None)
@@ -948,7 +993,13 @@ async def aprobar_lote(
                 except Exception as zoho_err:
                     logger.error(f"Zoho excepción caso {cid}: {zoho_err} — intentando fallback SMTP")
             if not ok:
-                ok = _send_via_smtp_fallback(email_destino, subject, caso["borrador_respuesta"])
+                # Fallback SMTP: pasar el buzón de origen como remitente para no
+                # filtrar desde Gmail demo. Requiere SMTP_FALLBACK_USER/PASS con
+                # credenciales del buzón (o relay que permita ese From).
+                ok = _send_via_smtp_fallback(
+                    email_destino, subject, caso["borrador_respuesta"],
+                    from_address=buzon["email_buzon"] if buzon else None,
+                )
                 if ok:
                     metodo_envio = "smtp_fallback"
             if ok:
