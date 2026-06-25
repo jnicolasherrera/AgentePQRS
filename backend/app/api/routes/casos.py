@@ -963,6 +963,7 @@ async def aprobar_lote(
             subject = f"Re: {caso['asunto']}"
             ok = False
             metodo_envio = "ninguno"
+            motivo_fallo = "Envio no intentado (sin proveedor configurado para el buzon)"
             # FF-fix 2026-06: enrutar el envío por el proveedor del buzón del tenant.
             # OUTLOOK (Microsoft 365, ej. FlexFintech) → Graph sendMail desde el
             # propio buzón. ZOHO → API Zoho. Si el camino primario falla, recién
@@ -987,8 +988,10 @@ async def aprobar_lote(
                     if ok:
                         metodo_envio = "outlook_graph"
                     else:
+                        motivo_fallo = "Graph (Outlook) rechazó el envío"
                         logger.warning(f"Graph retornó False para caso {cid} — intentando fallback SMTP")
                 except Exception as gerr:
+                    motivo_fallo = f"Graph (Outlook) error: {gerr}"
                     logger.error(f"Graph excepción caso {cid}: {gerr} — intentando fallback SMTP")
             elif zoho:
                 try:
@@ -997,8 +1000,10 @@ async def aprobar_lote(
                     if ok:
                         metodo_envio = "zoho"
                     else:
+                        motivo_fallo = "Zoho rechazó el envío"
                         logger.warning(f"Zoho retornó False para caso {cid} — intentando fallback SMTP")
                 except Exception as zoho_err:
+                    motivo_fallo = f"Zoho error: {zoho_err}"
                     logger.error(f"Zoho excepción caso {cid}: {zoho_err} — intentando fallback SMTP")
             if not ok:
                 # Fallback SMTP: pasar el buzón de origen como remitente para no
@@ -1010,6 +1015,8 @@ async def aprobar_lote(
                 )
                 if ok:
                     metodo_envio = "smtp_fallback"
+                else:
+                    motivo_fallo = f"Todos los métodos fallaron (último: fallback SMTP). {motivo_fallo}"
             if ok:
                 await conn.execute(
                     """UPDATE pqrs_casos SET borrador_estado='ENVIADO', estado='CERRADO',
@@ -1106,7 +1113,7 @@ async def aprobar_lote(
                     except Exception as sp_err:
                         logger.warning(f"SP archivar_caso falló caso {cid}: {sp_err}")
             else:
-                errores.append({"caso_id": cid, "motivo": "Error Zoho al enviar"})
+                errores.append({"caso_id": cid, "motivo": motivo_fallo})
         except Exception as e:
             logger.error(f"Error lote caso {cid}: {e}")
             errores.append({"caso_id": cid, "motivo": str(e)})
