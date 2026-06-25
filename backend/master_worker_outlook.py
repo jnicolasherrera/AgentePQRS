@@ -533,9 +533,12 @@ async def master_worker():
                 parsed_emails = []
                 if prov == 'OUTLOOK':
                     # Usamos las credenciales AZURE de la tabla si existen, sino fallback flex
-                    az_client = b['azure_client_id'] or AZURE_CLIENT_ID
-                    az_secret = b['azure_client_secret'] or AZURE_CLIENT_SECRET
-                    az_tenant = b['azure_tenant_id'] or AZURE_TENANT_ID
+                    az_client = b['azure_client_id']
+                    az_secret = b['azure_client_secret']
+                    az_tenant = b['azure_tenant_id']
+                    if not (az_client and az_secret and az_tenant):
+                        logger.error(f"Buzon OUTLOOK {email} sin credenciales Azure propias en config_buzones — se omite (no se usa fallback cross-tenant)")
+                        continue
                     
                     listener = MultiTenantOutlookListener({"client_id": az_client, "secret": az_secret, "tenant": az_tenant})
                     raw_msgs = listener.fetch_emails(email, b['azure_folder_id'])
@@ -575,10 +578,13 @@ async def master_worker():
                 sp_engine = None
                 if b['sharepoint_site_id']:
                     # Reutilizamos credenciales de Azure del cliente para SharePoint si no hay otras
-                    sp_client = b['azure_client_id'] or AZURE_CLIENT_ID
-                    sp_secret = b['azure_client_secret'] or AZURE_CLIENT_SECRET
-                    sp_tenant = b['azure_tenant_id'] or AZURE_TENANT_ID
-                    sp_engine = SharePointEngineV2(sp_client, sp_secret, sp_tenant, b['sharepoint_site_id'], b['sharepoint_base_folder'])
+                    sp_client = b['azure_client_id']
+                    sp_secret = b['azure_client_secret']
+                    sp_tenant = b['azure_tenant_id']
+                    if sp_client and sp_secret and sp_tenant:
+                        sp_engine = SharePointEngineV2(sp_client, sp_secret, sp_tenant, b['sharepoint_site_id'], b['sharepoint_base_folder'])
+                    else:
+                        logger.warning(f"Buzon {email}: SharePoint configurado pero sin credenciales Azure propias — se omite archivado SP")
 
                 TIPOS_VALIDOS = {"TUTELA", "PETICION", "QUEJA", "RECLAMO", "SOLICITUD"}
 
