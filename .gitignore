@@ -46,6 +46,10 @@ _rediseno_shots/
 docker-compose.override.yml
 nginx/certs/*.key
 nginx/certs/*.orig
+# Config local del vault de Obsidian (no versionar)
+.obsidian/
+# Backups de deploy quirúrgico a prod (.bak.YYYYMMDD)
+*.bak.*
 # >>> 1Password op-inject >>>
 # El .env real se regenera con scripts/secrets.sh; el .env*.tpl NO tiene secretos.
 .env.bak.*
