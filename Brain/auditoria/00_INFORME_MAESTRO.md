@@ -21,9 +21,10 @@
 `download_adjunto`: query `WHERE id=$1 AND caso_id=$2`, **sin `cliente_id` ni rol**. Como el backend corre como `pqrs_admin` (BYPASSRLS), **cualquier usuario autenticado puede bajar documentos (tutelas, cédulas, PDFs) de CUALQUIER tenant** iterando UUIDs.
 **Fix:** agregar `AND cliente_id = $tenant` (+ filtro `asignado_a` para abogados) a la query.
 
-### C2 · Backend corre como superuser que bypassa RLS — `config.py:5` (arquitectónico)
-`database_url` usa `pqrs_admin` (BYPASSRLS). **El RLS no aísla NADA en la API** — todo el aislamiento multi-tenant depende de WHERE manuales. Multiplica la severidad de toda omisión de filtro (C1, A3, A4).
-**Fix:** migrar el backend a `pqrs_backend` (RLS activo) usando `SET LOCAL` por transacción. Cambio mayor → planificar; mientras tanto, auditar TODO query por filtro de tenant.
+### C2 · Backend corre como superuser que bypassa RLS — `config.py:5` (arquitectónico) ✅RESUELTO+VALIDADO EN PROD (2026-06-25)
+**Reconciliación:** la auditoría leyó `config.py` (default `pqrs_admin`) pero el ENV de prod ya sobreescribía a `pqrs_backend` (no-superuser, RLS activo) → la premisa central ya estaba resuelta. RLS YA filtraba 10/20 tablas (ver `C2_HALLAZGO_rls_ya_activo.md`).
+**Trabajo real ejecutado:** se cerraron las 5 tablas multi-tenant que SÍ fugaban a través del backend real (`pqrs_backend`): `borrador_feedback` (fugaba 173 filas FF a Recovery), `pqrs_clasificacion_feedback` (192), `plantillas_respuesta` (49), + `kb_ingestion_log`/`audit_log_respuestas` preventivas. Policies en `docs/superpowers/plans/c2_policies.sql`.
+**Validado:** staging (espejo de prod) ANTES/DESPUÉS + prod con datos reales. DESPUÉS: 0 cross-tenant en las 5 tablas; acceso legítimo intacto (Recovery ve sus 8 plantillas); super_admin ve ambos tenants; backend HTTP 200. Prod pasó de 10 → 15 policies.
 
 ### C3 · `jwt_secret_key` default `"dev-key-change-in-prod"` — `config.py:7` ✅VERIFICADO OK EN PROD (2026-06-25)
 Si el `.env` de prod no lo sobreescribe, los JWT serían **falsificables** → cualquiera firma un token `super_admin` de cualquier tenant.
