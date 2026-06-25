@@ -12,18 +12,18 @@ done
 echo "PostgreSQL staging listo."
 
 echo "Aplicando schema..."
-docker cp 01_schema_v2.sql pqrs_staging_db:/tmp/01_schema_v2.sql
+docker cp db/schema/01_schema_v2.sql pqrs_staging_db:/tmp/01_schema_v2.sql
 docker exec pqrs_staging_db psql -U pqrs_admin -d pqrs_staging -f /tmp/01_schema_v2.sql
 
 echo "Aplicando RLS..."
-docker cp 02_rls_security_v2.sql pqrs_staging_db:/tmp/02_rls_security_v2.sql
+docker cp db/schema/02_rls_security_v2.sql pqrs_staging_db:/tmp/02_rls_security_v2.sql
 docker exec pqrs_staging_db psql -U pqrs_admin -d pqrs_staging -f /tmp/02_rls_security_v2.sql
 
 # Aplicar schemas adicionales si existen
 for f in 03_advanced_features_v2.sql 04_multi_tenant_config_v2.sql 05_multi_provider_buzones.sql 08_plantillas_schema.sql; do
-  if [ -f "$f" ]; then
+  if [ -f "db/schema/$f" ]; then
     echo "Aplicando $f..."
-    docker cp "$f" pqrs_staging_db:/tmp/"$f"
+    docker cp "db/schema/$f" pqrs_staging_db:/tmp/"$f"
     docker exec pqrs_staging_db psql -U pqrs_admin -d pqrs_staging -f /tmp/"$f" 2>/dev/null || true
   fi
 done

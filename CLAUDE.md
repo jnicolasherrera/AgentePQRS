@@ -9,8 +9,8 @@ Sistema multi-tenant de gestión de PQRS (Peticiones/Quejas/Reclamos/Sugerencias
 - **Workers:** `master_worker_outlook.py` (orquestador), worker `inbound_email`. En prod el master es `master_worker_v2`.
 - **DB:** PostgreSQL (`postgres_v2`), con **RLS activo**. El user `pqrs_admin` **bypassa RLS** — usarlo con cuidado en queries de inspección.
 - **Infra compose:** postgres_v2, redis_v2, zookeeper_v2, kafka_v2.
-- **Inbound:** Microsoft Graph (envío FF) + Outlook. `inbound_outlook_v2.py` en raíz.
-- **Schema:** archivos `0X_*.sql` en raíz (schema, RLS, multi-tenant, buzones, plantillas).
+- **Inbound:** Microsoft Graph (envío FF) + Outlook. `scripts/inbound_outlook_v2.py`.
+- **Schema:** archivos `0X_*.sql` en `db/schema/` (schema, RLS, multi-tenant, buzones, plantillas).
 
 ## Multi-tenant
 - Tabla de clientes = **`clientes_tenant`** (NO `tenants`).
