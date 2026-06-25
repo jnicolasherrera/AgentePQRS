@@ -61,6 +61,10 @@ async def get_db_connection(
             raise HTTPException(status_code=401, detail="Token invalido o expirado")
 
     async with db_pool.acquire() as connection:
+        # Defensa A6: reset del contexto RLS al adquirir, por si la conexion
+        # del pool quedo con basura de una request anterior (finally fallido).
+        for _var in RLS_VARS:
+            await connection.execute("SELECT set_config($1, '', false)", _var)
         if tenant_id:
             await connection.execute(
                 "SELECT set_config('app.current_tenant_id', $1, false)", tenant_id
