@@ -118,7 +118,8 @@ async def _registrar_seguimiento(conn, em: dict, c_id) -> bool:
     if match:
         radicado = match.group(0).upper()
         caso = await conn.fetchrow(
-            "SELECT id, estado FROM pqrs_casos WHERE numero_radicado = $1 AND cliente_id = $2",
+            """SELECT id, estado, tipo_caso, tipo_workflow, email_origen, numero_radicado
+               FROM pqrs_casos WHERE numero_radicado = $1 AND cliente_id = $2""",
             radicado, c_id,
         )
 
@@ -127,7 +128,8 @@ async def _registrar_seguimiento(conn, em: dict, c_id) -> bool:
         base = _strip_prefixes(subject)
         if len(base) >= 8:
             caso = await conn.fetchrow(
-                """SELECT id, estado FROM pqrs_casos
+                """SELECT id, estado, tipo_caso, tipo_workflow, email_origen, numero_radicado
+                   FROM pqrs_casos
                    WHERE cliente_id = $1 AND email_origen = $2
                      AND asunto ILIKE $3
                      AND fecha_recibido > NOW() - INTERVAL '90 days'
@@ -157,6 +159,24 @@ async def _registrar_seguimiento(conn, em: dict, c_id) -> bool:
                VALUES ($1, $2, $3, $4, 'SEGUIMIENTO_CIUDADANO', NOW())""",
             _uuid.uuid4(), caso_id, c_id, comentario,
         )
+        # Borrador de respuesta para el NUEVO mensaje del ciudadano (2026-06-25).
+        # Antes el seguimiento solo dejaba un comentario y reabría el caso, pero el
+        # operador no recibía una respuesta lista para el nuevo correo. Ahora se
+        # genera un borrador nuevo (queda en borrador_estado='PENDIENTE') usando el
+        # contenido del seguimiento. Best-effort: si falla, el caso igual queda
+        # reabierto con el comentario — no rompe la ingesta.
+        try:
+            await generar_borrador_para_caso(
+                conn, str(c_id), str(caso_id),
+                subject, body[:1000],
+                tipo_caso=caso["tipo_caso"],
+                radicado=caso["numero_radicado"],
+                email_origen=caso["email_origen"] or em["sender"],
+                tipo_workflow=caso["tipo_workflow"] or "PQRS",
+            )
+            logger.info(f"📝 Borrador regenerado por seguimiento (caso {str(caso_id)[:8]})")
+        except Exception as _e:
+            logger.warning(f"⚠️ No se pudo generar borrador del seguimiento (caso {str(caso_id)[:8]}): {_e}")
     # Reapertura: un caso cerrado/contestado que recibe seguimiento del ciudadano
     # vuelve a EN_PROCESO para que el operador lo atienda. Se ejecuta aunque el
     # comentario ya existiera (idempotente: si ya está EN_PROCESO no cambia nada).
