@@ -1,5 +1,19 @@
 # Deudas técnicas registradas
 
+## demo_worker zombie apagado — decidir borrado del compose — ⏳ 2026-06-25
+
+**Estado:** `pqrs_v2_demo_worker` APAGADO con `docker stop` (reversible). Falta decidir si se saca del `docker-compose.yml` definitivamente.
+
+**Contexto:** el contenedor `pqrs_v2_demo_worker` (servicio compose `demo_worker_v2`, `command: python demo_worker.py`) figuraba `Up (unhealthy)` pero estaba **congelado desde el 29-may 06:44** (27 días sin actividad; última línea de log + `ACTIVITY_FLAG` ambos en esa fecha). Polleaba el buzón demo **`democlasificador@gmail.com`** (tenant **Demo FlexPQR** `11111111-...`), que tuvo **0 casos en los últimos 30 días**. Los clientes reales (Abogados Recovery 761 casos, FlexFintech 235) entran por `master_worker` (healthy, intacto). Apagarlo no afectó nada: backend siguió HTTP 200. Hallazgo de la auditoría full 2026-06-25.
+
+**Pendientes:**
+1. **Decidir borrado permanente:** sacar el servicio `demo_worker_v2` del `docker-compose.yml` de prod (líneas ~136-156) para que no reviva en un `up` del stack completo. Cambio de código → vía Claude Code CLI. Mientras tanto, si se reinicia el stack, volvería a levantar.
+2. **Revertir si hiciera falta:** `docker start pqrs_v2_demo_worker`.
+
+**Severidad:** BAJA. Ya apagado, sin impacto en clientes. Solo falta el sello de borrado del compose.
+
+---
+
 ## Envío FlexFintech por Graph — validación e2e pendiente — ⏳ 2026-06-25
 
 **Estado:** fix desplegado a prod, falta prueba end-to-end desde la app.

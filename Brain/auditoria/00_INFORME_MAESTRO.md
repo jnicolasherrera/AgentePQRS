@@ -25,8 +25,10 @@
 `database_url` usa `pqrs_admin` (BYPASSRLS). **El RLS no aísla NADA en la API** — todo el aislamiento multi-tenant depende de WHERE manuales. Multiplica la severidad de toda omisión de filtro (C1, A3, A4).
 **Fix:** migrar el backend a `pqrs_backend` (RLS activo) usando `SET LOCAL` por transacción. Cambio mayor → planificar; mientras tanto, auditar TODO query por filtro de tenant.
 
-### C3 · `jwt_secret_key` default `"dev-key-change-in-prod"` — `config.py:7`
-Si el `.env` de prod no lo sobreescribe, los JWT son **falsificables** → cualquiera firma un token `super_admin` de cualquier tenant. **VERIFICAR en prod ya** que la env var esté seteada.
+### C3 · `jwt_secret_key` default `"dev-key-change-in-prod"` — `config.py:7` ✅VERIFICADO OK EN PROD (2026-06-25)
+Si el `.env` de prod no lo sobreescribe, los JWT serían **falsificables** → cualquiera firma un token `super_admin` de cualquier tenant.
+**Verificado en prod:** `JWT_SECRET_KEY` ESTÁ seteada, NO es el default, valor de 64 chars. **Sin vulnerabilidad activa.**
+**Mejora defensiva pendiente (no urgente):** hacer fail-fast — que la app aborte el arranque si `jwt_secret_key == "dev-key-change-in-prod"`, para que un entorno nuevo sin `.env` no arranque inseguro en silencio.
 
 ### C4 · `worker_outlook.py:12` — secreto Azure roto (string literal) ✅VERIFICADO
 `AZURE_CLIENT_SECRET = "os.environ.get("AZURE_CLIENT_SECRET")"` → es un string literal, **nunca lee la env**. Además `client_id` y `tenant_id` **hardcodeados en texto plano** (líneas 11,13). Auth Graph de ese worker rota.
