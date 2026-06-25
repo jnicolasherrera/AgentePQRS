@@ -46,7 +46,7 @@ El bug original "los mails salen de la casilla equivocada" persiste como **defau
 
 ## 🟠 ALTOS (incluir en el parche de versión)
 
-- **A1 · Fallback SMTP enmascara fallos — `casos.py:1002-1011`.** Ante cualquier `ok=False` de Graph/Zoho, cae a SMTP y marca el caso `ENVIADO/CERRADO` **igual** → el operador cree que respondió aunque no salió nada. Debe propagar el error real.
+- **A1 · Fallback SMTP enmascara fallos — `casos.py:1002-1011`.** ✅RESUELTO+DESPLEGADO (PR #25, 2026-06-25). El UPDATE a `ENVIADO/CERRADO` ya estaba protegido por `if ok:` (un fallo total no marcaba enviado). El bug real era el motivo de error hardcodeado "Error Zoho al enviar" → ahora `motivo_fallo` reporta la causa real (Graph/Zoho/SMTP) en `errores[]`.
 - **A2 · Credenciales Azure hardcodeadas + usadas como fallback cross-tenant — `master_worker_outlook.py:71,73,536-538`.** Un buzón mal configurado de otro tenant usaría las credenciales de FlexFintech.
 - **A3 · `get_caso_detalle` sin filtro `asignado_a` — `casos.py:322-341`.** Un abogado puede **ver** casos fuera de su cartera (fuga intra-tenant entre carteras de Recovery).
 - **A4 · `update_caso` (PATCH) sin verificación de rol — `casos.py:490-534`.** Cualquier rol autenticado puede cambiar estado/reasignar casos. Escalada de privilegios.
