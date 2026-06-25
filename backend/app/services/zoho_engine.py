@@ -224,7 +224,10 @@ class ZohoServiceV2:
         adjuntos: lista de {nombre, content (bytes), content_type}
         """
         self._rate_limit_send()
-        firma = _firma_html()
+        # firma-por-tenant 2026-06-25: la firma se resuelve por buzón de origen.
+        # FlexFintech → texto; Recovery/ARC → imagen institucional (data URI).
+        from app.services.firma_engine import firma_html_datauri
+        firma = firma_html_datauri(email_buzon=from_address)
         html_body = (
             "<div style='font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6'>"
             + _md_to_html(body)

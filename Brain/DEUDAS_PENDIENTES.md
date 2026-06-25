@@ -1,5 +1,29 @@
 # Deudas técnicas registradas
 
+## Envío FlexFintech por Graph — validación e2e pendiente — ⏳ 2026-06-25
+
+**Estado:** fix desplegado a prod, falta prueba end-to-end desde la app.
+
+**Contexto:** las respuestas de FlexFintech salían desde `democlasificador@gmail.com`
+(fallback SMTP) porque FF es `proveedor=OUTLOOK` sin Zoho y el envío no tenía rama Graph
++ la App Azure no tenía `Mail.Send`. Fix en PR #20 (rama `fix/ff-envio-outlook-graph`):
+nuevo `outlook_send_engine.py` (OutlookSenderV2 vía Graph sendMail) + enrutado por proveedor
+en `casos.py`. Permiso `Mail.Send` + admin consent agregado en Azure (verificado: sendMail→202).
+Desplegado quirúrgicamente a prod (backend_v2 rebuild, HTTP 200). Detalle: `Brain/sesion_20260625_fix_envio_ff_outlook_graph.md`.
+
+**Pendientes:**
+1. **Prueba e2e**: un usuario aprueba/envía un lote FF desde la app → confirmar en
+   `audit_log_respuestas.metadata.metodo_envio = 'outlook_graph'` y que el correo llega
+   desde `clientes@flexfintech.com`. (608 casos FF pendientes para probar.)
+2. **Mergear PR #20** a main tras confirmar e2e.
+3. **(Opcional, seguridad)** Acotar `Mail.Send` solo a `clientes@flexfintech.com` con una
+   Application Access Policy en Exchange Online (`New-ApplicationAccessPolicy`). Hoy el permiso
+   permite enviar como cualquier buzón del tenant.
+
+**Severidad:** MEDIA. El fix ya está en prod y funcional; falta el sello de confirmación e2e.
+
+---
+
 ## Seed plantillas Recovery en prod — ✅ OBSOLETA 2026-06-01
 
 **Estado:** descartada (no se ejecutó el seed, ni hace falta).
