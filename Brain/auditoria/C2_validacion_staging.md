@@ -30,7 +30,16 @@ Staging tenía un esquema MUY viejo: 10 tablas (vs 19 prod), `pqrs_casos` con 16
 Las 5 policies (`docs/superpowers/plans/c2_policies.sql`) están **probadas y validadas** en un staging que ahora es espejo fiel de prod. Listas para deploy a prod con el mismo SQL. El patrón (directa por `cliente_id` + JOIN para `audit_log_respuestas` + bypass `is_superuser`) funciona y no rompe acceso legítimo.
 
 ## Pendiente para prod (Fase 2)
-1. Aplicar `c2_policies.sql` en prod (`pqrs_v2`).
-2. Validar con el mismo método (medir fuga antes/después con `pqrs_backend` y datos reales de Recovery/FlexFintech).
-3. Documentar en informe maestro: C2 cerrado.
-4. (Recordar) RLS ya estaba activo en prod — ver `C2_HALLAZGO_rls_ya_activo.md`.
+✅ **COMPLETADO 2026-06-25.** Las 5 policies se aplicaron en prod (`pqrs_v2`, 10→15 policies) y se validaron con datos reales (Recovery vs FlexFintech):
+
+| Tabla | ANTES (de FF visible a Recovery) | DESPUÉS |
+|---|---|---|
+| borrador_feedback | 173 FUGA | 0 ✅ |
+| pqrs_clasificacion_feedback | 192 FUGA | 0 ✅ |
+| plantillas_respuesta | 49 FUGA | 0 ✅ |
+| kb_ingestion_log | 0 | 0 ✅ |
+| audit_log_respuestas | 0 (JOIN) | 0 ✅ |
+
+- Acceso legítimo intacto: Recovery ve sus 8 plantillas; FlexFintech ve solo lo suyo.
+- super_admin ve ambos tenants (bypass OK). Backend HTTP 200, sin regresión.
+- Rollback disponible: `DROP POLICY <nombre> ON <tabla>` (aditivas, reversibles).
