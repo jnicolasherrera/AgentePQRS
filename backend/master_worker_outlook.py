@@ -118,7 +118,8 @@ async def _registrar_seguimiento(conn, em: dict, c_id) -> bool:
     if match:
         radicado = match.group(0).upper()
         caso = await conn.fetchrow(
-            "SELECT id, estado FROM pqrs_casos WHERE numero_radicado = $1 AND cliente_id = $2",
+            """SELECT id, estado, tipo_caso, tipo_workflow, email_origen, numero_radicado
+               FROM pqrs_casos WHERE numero_radicado = $1 AND cliente_id = $2""",
             radicado, c_id,
         )
 
@@ -127,7 +128,8 @@ async def _registrar_seguimiento(conn, em: dict, c_id) -> bool:
         base = _strip_prefixes(subject)
         if len(base) >= 8:
             caso = await conn.fetchrow(
-                """SELECT id, estado FROM pqrs_casos
+                """SELECT id, estado, tipo_caso, tipo_workflow, email_origen, numero_radicado
+                   FROM pqrs_casos
                    WHERE cliente_id = $1 AND email_origen = $2
                      AND asunto ILIKE $3
                      AND fecha_recibido > NOW() - INTERVAL '90 days'
@@ -140,11 +142,44 @@ async def _registrar_seguimiento(conn, em: dict, c_id) -> bool:
 
     caso_id = caso["id"]
     comentario = f"[Seguimiento ciudadano]\nDe: {em['sender']}\nAsunto: {subject}\n\n{body[:2000]}"
-    await conn.execute(
-        """INSERT INTO pqrs_comentarios (id, caso_id, cliente_id, comentario, tipo_evento, created_at)
-           VALUES ($1, $2, $3, $4, 'SEGUIMIENTO_CIUDADANO', NOW())""",
-        _uuid.uuid4(), caso_id, c_id, comentario,
+    # Idempotencia (fix loop infinito 2026-06-25): no insertar el mismo seguimiento
+    # dos veces. Antes, si el correo no se marcaba como leído, cada ciclo del worker
+    # lo reprocesaba e insertaba un comentario duplicado → cientos de miles de filas.
+    # El mark_as_read en el caller corta el loop de raíz; este guard es defensa en
+    # profundidad por si el correo reaparece (re-sync, fallo de PATCH isRead, etc.).
+    ya_existe = await conn.fetchval(
+        """SELECT 1 FROM pqrs_comentarios
+           WHERE caso_id = $1 AND comentario = $2 AND tipo_evento = 'SEGUIMIENTO_CIUDADANO'
+           LIMIT 1""",
+        caso_id, comentario,
     )
+    if not ya_existe:
+        await conn.execute(
+            """INSERT INTO pqrs_comentarios (id, caso_id, cliente_id, comentario, tipo_evento, created_at)
+               VALUES ($1, $2, $3, $4, 'SEGUIMIENTO_CIUDADANO', NOW())""",
+            _uuid.uuid4(), caso_id, c_id, comentario,
+        )
+        # Borrador de respuesta para el NUEVO mensaje del ciudadano (2026-06-25).
+        # Antes el seguimiento solo dejaba un comentario y reabría el caso, pero el
+        # operador no recibía una respuesta lista para el nuevo correo. Ahora se
+        # genera un borrador nuevo (queda en borrador_estado='PENDIENTE') usando el
+        # contenido del seguimiento. Best-effort: si falla, el caso igual queda
+        # reabierto con el comentario — no rompe la ingesta.
+        try:
+            await generar_borrador_para_caso(
+                conn, str(c_id), str(caso_id),
+                subject, body[:1000],
+                tipo_caso=caso["tipo_caso"],
+                radicado=caso["numero_radicado"],
+                email_origen=caso["email_origen"] or em["sender"],
+                tipo_workflow=caso["tipo_workflow"] or "PQRS",
+            )
+            logger.info(f"📝 Borrador regenerado por seguimiento (caso {str(caso_id)[:8]})")
+        except Exception as _e:
+            logger.warning(f"⚠️ No se pudo generar borrador del seguimiento (caso {str(caso_id)[:8]}): {_e}")
+    # Reapertura: un caso cerrado/contestado que recibe seguimiento del ciudadano
+    # vuelve a EN_PROCESO para que el operador lo atienda. Se ejecuta aunque el
+    # comentario ya existiera (idempotente: si ya está EN_PROCESO no cambia nada).
     if caso["estado"] in ("CERRADO", "CONTESTADO"):
         await conn.execute(
             "UPDATE pqrs_casos SET estado='EN_PROCESO', updated_at=NOW() WHERE id=$1",
@@ -563,6 +598,17 @@ async def master_worker():
                     # no descartarse silenciosamente. _registrar_seguimiento es
                     # barato (short-circuit si subject no es Re:/Fw:).
                     if await _registrar_seguimiento(conn, em, c_id):
+                        # fix loop infinito 2026-06-25: marcar leído ANTES del continue.
+                        # Sin esto, fetch_emails (filtro isRead eq false) traía el mismo
+                        # seguimiento en cada ciclo → reproceso infinito (775k comentarios
+                        # duplicados en prod). Marcar leído lo saca de la cola de no-leídos.
+                        try:
+                            if prov == 'OUTLOOK':
+                                em['prov_obj'].mark_as_read(em['email_buzon'], em['id'])
+                            else:
+                                em['prov_obj'].mark_as_read(em['id'])
+                        except Exception as _e:
+                            logger.warning(f"⚠️ No se pudo marcar leído el seguimiento {em.get('id','?')}: {_e}")
                         continue
 
                     # Cutoff: ignorar mails anteriores a procesar_desde (evita
