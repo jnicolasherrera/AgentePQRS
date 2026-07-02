@@ -1,5 +1,14 @@
 # Brain Changelog
 
+## 2026-07-02
+- ops(prod) **DESPLEGADO**: upgrade full a `main@59e23a7` en ventana 18:00 ART — cierra "deuda de deploy #1". Entra a runtime: F1+F2 lectura de adjuntos (PRs de mayo), RAG cierre-de-loop, `/health` (DT-25), reclasificación PQRS↔AC (#19), fixes auditoría A1–A7, RBAC operador v2.
+  - Migración 14 aplicada a prod (regimen_sla + festivos + sla_regimen_config) — el Motor SLA sectorial deja de estar dormido.
+  - 2 incidentes en el corte, resueltos en ~15 min: grants faltantes de las tablas mig 14 para `aequitas_worker` (patrón DT-43) y `asunto varchar(500)` bloqueando el buzón ARC en loop (asunto real >500 chars) → `asunto`/`storage_path` a TEXT con recreate de `tutelas_view`. Versionado como **migración 20** (pendiente staging).
+  - Validación E2E con casos REALES de ARC: adjuntos descargados para contexto del borrador + `rag_docs=3` en el primer ciclo post-deploy.
+  - demo_worker: revivido al mediodía para demo en vivo (había sido apagado el 25/06 como zombie) — **se queda: se usa para demos comerciales**.
+  - Rollback disponible: imágenes `:pre-upgrade-20260702`, tag git `pre-f1f2-prod-20260702`, dump 8.4 MB. Borrar tags en ~1 semana (disco 89%).
+- bitácora completa: `Brain/sesion_20260702_deploy_f1f2_prod.md`
+
 ## 2026-06-24
 - fix(rbac) **DESPLEGADO**: rol `abogado` (Arcas / tenant Abogados Recovery) operativo. Modelo "cada uno ve lo suyo" unificado en la Bandeja:
   - Fase 1 backend (hotfix en prod, commits `aecac2d`+`3343d93`): `/admin/casos` y `/stats/dashboard` aceptan `abogado`/`analista` forzando `asignado_a`=ellos; `/casos/enviados/historial` revertido (ven solo SUS envíos). Verificado e2e: abogado→256 casos (antes 403), admin→1590, enviados→29.

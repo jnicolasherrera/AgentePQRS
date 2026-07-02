@@ -1,8 +1,21 @@
 # Deudas técnicas registradas
 
-## demo_worker zombie apagado — decidir borrado del compose — ⏳ 2026-06-25
+## Post-deploy F1/F2 prod (2026-07-02) — colita pendiente
 
-**Estado:** `pqrs_v2_demo_worker` APAGADO con `docker stop` (reversible). Falta decidir si se saca del `docker-compose.yml` definitivamente.
+**Contexto:** prod actualizado a `main@59e23a7` el 2026-07-02 18:00 ART (bitácora `sesion_20260702_deploy_f1f2_prod.md`). Quedan 4 pendientes chicos:
+
+1. **Migración 20 en staging** (`aequitas_infrastructure/database/20_asunto_text_y_grants_worker.sql`): ya aplicada a prod a mano durante el corte (asunto/storage_path → TEXT + recreate `tutelas_view` + grants worker de las tablas mig 14). Staging la necesita para no divergir.
+2. **`location /health` en nginx prod**: el endpoint `/health` (DT-25) responde OK en loopback pero nginx no lo proxya → los uptime-probes externos no llegan. Un `location /health { proxy_pass ... }` lo cierra al 100%.
+3. **Borrar tags rollback `pre-upgrade-20260702`** (imágenes backend/master/demo) en ~1 semana si prod sigue estable → recupera ~2 GB (disco al 89%).
+4. **Truncado cosmético de asuntos >500 chars en la UI** (opcional; la DB ya los acepta con TEXT).
+
+---
+
+## demo_worker zombie apagado — decidir borrado del compose — ✅ RESUELTA 2026-07-02 (se queda)
+
+**Resolución:** el 2026-07-02 al mediodía se lo revivió (`docker start`) para una **demo comercial en vivo** de Nico y funcionó (ingirió caso `c5098ce5` con PDF vía `democlasificador@gmail.com`). **Decisión: NO se borra del compose — el buzón demo se usa para demos comerciales.** Con el deploy de la noche corre imagen nueva (código main). Deuda residual: healthcheck real para que un congelamiento como el del 29-may no pase inadvertido (va con DT-33).
+
+**Estado anterior (histórico):** `pqrs_v2_demo_worker` APAGADO con `docker stop` (reversible). Falta decidir si se saca del `docker-compose.yml` definitivamente.
 
 **Contexto:** el contenedor `pqrs_v2_demo_worker` (servicio compose `demo_worker_v2`, `command: python demo_worker.py`) figuraba `Up (unhealthy)` pero estaba **congelado desde el 29-may 06:44** (27 días sin actividad; última línea de log + `ACTIVITY_FLAG` ambos en esa fecha). Polleaba el buzón demo **`democlasificador@gmail.com`** (tenant **Demo FlexPQR** `11111111-...`), que tuvo **0 casos en los últimos 30 días**. Los clientes reales (Abogados Recovery 761 casos, FlexFintech 235) entran por `master_worker` (healthy, intacto). Apagarlo no afectó nada: backend siguió HTTP 200. Hallazgo de la auditoría full 2026-06-25.
 
@@ -67,9 +80,11 @@ Correr el seed → UPDATE destructivo: sobreescribiría 4 plantillas con version
 
 ---
 
-## Motor SLA sectorial — deploy pendiente
+## Motor SLA sectorial — ✅ DESPLEGADO A PROD 2026-07-02
 
-**Estado:** dormido en `main` desde 2026-04-13
+**Resolución:** migración 14 aplicada a prod durante el deploy F1/F2 (2026-07-02 18:00 ART) ANTES del rebuild, exactamente como pedía el plan de esta deuda. Verificado: columna `regimen_sla`, 22 festivos, 24 configs SLA, trigger activo. Todos los tenants quedan en `GENERAL` (default) — activar `FINANCIERO` para quien corresponda es decisión de negocio aparte. Ver `sesion_20260702_deploy_f1f2_prod.md` (incluye el grant a `aequitas_worker` que la migración no traía — ahora versionado en migración 20).
+
+**Estado anterior (histórico):** dormido en `main` desde 2026-04-13
 **Commits involucrados:**
 - `c26bcee` — feat(sla): motor SLA sectorial — régimen FINANCIERO 8 días SFC
 - `0713f74` — fix(sla): agregar tabla `festivos_colombia` 2026 a migración 14
@@ -380,7 +395,9 @@ Adicionalmente, UUIDs productivos de FlexFintech y Cliente2 en `04_multi_tenant_
 
 ---
 
-### DT-25 — Backend no expone `/health` — ✅ RESUELTA 2026-06-01 (staging)
+### DT-25 — Backend no expone `/health` — ✅ RESUELTA 2026-06-01 (staging) + 2026-07-02 (prod)
+
+**Update 2026-07-02:** endpoint vivo en prod tras el deploy F1/F2 (`{"status":"ok","db":"up"}` en loopback). Colita: nginx prod no proxya `/health` → para uptime-probes externos falta un `location /health` (ver "Post-deploy F1/F2 prod").
 
 **Origen:** verificación de restart del backend_v2 en staging (2026-04-23). `GET /health` → 404. La ruta canónica actual era `GET /` → `{"status":"ok","message":"FlexPQR API está VIVO."}`.
 
@@ -947,6 +964,8 @@ El hostname correcto es `minio` (service name del compose) o `pqrs_v2_minio` (co
 ---
 
 ## DT-43 — `aequitas_worker` grants en staging quedaron como `GRANT ALL` (lazy)
+
+**Evidencia nueva 2026-07-02:** el patrón mordió de nuevo en PROD durante el deploy F1/F2 — la mig 14 creó `sla_regimen_config`/`festivos_colombia` y el `GRANT ALL ON ALL TABLES` histórico (one-shot) no las cubría → master_worker caído en buzón ARC hasta el `GRANT SELECT` (migración 20). Tercera vez que el patrón genera incidente. Considerar `ALTER DEFAULT PRIVILEGES FOR ROLE pqrs_admin IN SCHEMA public GRANT SELECT ON TABLES TO aequitas_worker` (decisión de seguridad pendiente — sobre-otorga lectura futura, pero corta esta clase de incidentes) o la vía granular original.
 
 **Severidad:** Baja (funcional, viola least-privilege).
 **Origen:** 2026-06-01 durante upgrade staging — el código nuevo del worker (post-sprint FF) usa `WORKER_DB_URL=aequitas_worker` para separación de funciones. En prod el rol tenía grants completos por histórico; en staging sólo tenía grants en las 5 tablas creadas en mayo (`respuestas_kb`, `ab_test_borradores`, `historico_email_cedula`, `config_buzones`, `kb_ingestion_log`) — los workers crashearon con `permission denied for table clientes_tenant` y `pqrs_casos`.
